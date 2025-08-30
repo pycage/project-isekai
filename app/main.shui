@@ -822,11 +822,11 @@ Document {
 
             Label {
                 fillWidth: true
-                text: "Toon Effect"
+                text: "Show Outlines"
             }
 
             Switch {
-                id: toonEffectCheckBox
+                id: outlinesCheckBox
 
                 checked: false
             }
@@ -950,7 +950,7 @@ Document {
             canvas.setUniform("float", "fogDensity", fogDensitySlider.seekValue / 10000.0);
             canvas.setUniform("int", "marchingDepth", Math.floor(marchingDepthSlider.seekValue));
             canvas.setUniform("int", "tracingDepth", Math.floor(tracingDepthSlider.seekValue));
-            canvas.setUniform("int", "enableToonEffect", toonEffectCheckBox.checked);
+            canvas.setUniform("int", "enableOutlines", outlinesCheckBox.checked);
             canvas.setUniform("mat4", "cameraTrafo", cameraTrafo);
             canvas.setUniform("vec3", "universeLocation", mat.sub(canvas.universeLocation, mat.vec(128, 128, 128)));
 

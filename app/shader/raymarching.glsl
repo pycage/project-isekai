@@ -23,7 +23,7 @@ uniform int tracingDepth;
 uniform float fogDensity;
 uniform bool enableShadows;
 uniform bool enableAmbientOcclusion;
-uniform bool enableToonEffect;
+uniform bool enableOutlines;
 uniform bool enableTasm;
 uniform bool showNormals;
 
@@ -68,6 +68,7 @@ float depthMap = 0.0;
 int cubeDistanceMap = 0;
 float cubeEntryDistanceMap = 0.0;
 float voxelDistanceMap = 0.0;
+bool outlinesMap = false;
 
 bool freeEdge = false;
 bool aoEdge = false;
@@ -917,25 +918,25 @@ mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
     );
 }
 
-bool isEdgeZ(vec3 p)
+bool isEdgeZ(vec3 p, float epsilon)
 {
     // p is in object space
     p = abs(p);
-    return p.x > 0.4999 && abs(p.x - p.y) < 0.0001;
+    return p.x > 0.5 - epsilon && abs(p.x - p.y) < epsilon;
 }
 
-bool isEdgeY(vec3 p)
+bool isEdgeY(vec3 p, float epsilon)
 {
     // p is in object space
     p = abs(p);
-    return p.x > 0.4999 && abs(p.x - p.z) < 0.0001;
+    return p.x > 0.5 - epsilon && abs(p.x - p.z) < epsilon;
 }
 
-bool isEdgeX(vec3 p)
+bool isEdgeX(vec3 p, float epsilon)
 {
     // p is in object space
     p = abs(p);
-    return p.y > 0.4999 && abs(p.y - p.z) < 0.0001;
+    return p.y > 0.5 - epsilon && abs(p.y - p.z) < epsilon;
 }
 
 vec3 getSurfaceNormal(vec3 p)
@@ -1403,7 +1404,7 @@ float ambientOcclusion(vec3 checkPoint, vec3 rayDirection, WorldLocator obj, mat
                     (hasP3 ? size - dist3 : 0.0) +
                     (hasP4 ? size - dist4 : 0.0)) / (2.0 * size);
 
-    bool hasAo = shadow > 0.0;
+    bool hasAo = shadow > 0.2;
     aoEdge = hasAo;
 
     return clamp(shadow, 0.0, 1.0);
@@ -1436,14 +1437,19 @@ vec3 getCorrectedBoxNormals(WorldLocator obj, vec3 p, vec3 rayDirection)
     bool hasZNeighbor = hasObjectAt(centerPoint + surfaceNormalZ);
 
     // the interesting (because ambiguous) places are the edges and corners
-    bool edgeX = isEdgeX(p);
-    bool edgeY = isEdgeY(p);
-    bool edgeZ = isEdgeZ(p);
+    bool nearEdgeX = isEdgeX(p, 0.05);
+    bool nearEdgeY = isEdgeY(p, 0.05);
+    bool nearEdgeZ = isEdgeZ(p, 0.05);
     
-    // side-computation: only free edges may show toon lines
-    freeEdge = edgeX && (! hasYNeighbor && ! hasZNeighbor) ||
-               edgeY && (! hasXNeighbor && ! hasZNeighbor) ||
-               edgeZ && (! hasXNeighbor && ! hasYNeighbor);
+    
+    bool edgeX = nearEdgeX && isEdgeX(p, 0.0001);
+    bool edgeY = nearEdgeY && isEdgeY(p, 0.0001);
+    bool edgeZ = nearEdgeZ && isEdgeZ(p, 0.0001);
+    
+    // side-computation: only free edges may show outlines
+    freeEdge = nearEdgeX && (! hasYNeighbor && ! hasZNeighbor) ||
+               nearEdgeY && (! hasXNeighbor && ! hasZNeighbor) ||
+               nearEdgeZ && (! hasXNeighbor && ! hasYNeighbor);
 
     vec3 surfaceNormal;
 
@@ -1794,9 +1800,11 @@ void main()
     pixel *= exposure;
     pixel = gammaCorrection(pixel);
 
-    if (enableToonEffect)
+    outlinesMap = freeEdge || aoEdge;
+
+    if (enableOutlines && outlinesMap)
     {   
-        pixel = freeEdge || aoEdge ? vec3(0.0, 0.0, 0.0) : flattenColor(pixel, 8);
+        pixel = vec3(0.0, 0.0, 0.0);
     }
 
     if (debug == 1)
@@ -1818,5 +1826,6 @@ void main()
         //fragColor = vec4(vec3(min(cubeEntryDistanceMap, 100.0) / 100.0), 1.0);
         //fragColor = vec4(vec3(min(depthMap, 100.0) / 100.0), 1.0);
         //fragColor = vec4(vec3(min(voxelDistanceMap, 100.0) / 100.0), 1.0);
+        //fragColor = vec4(vec3(outlinesMap ? 0.0 : 1.0), 1.0);
     }
 }
