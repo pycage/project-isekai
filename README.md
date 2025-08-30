@@ -18,7 +18,31 @@ Right now, it uses:
 * WebGL2 for the rendering
 * AssemblyScript for real-time terrain generation
 
-## Voxels
+## Usage
+
+### Setup
+
+The scripts provided are intended for Linux. Feel free to port to other platforms.
+
+* `npm install`
+* `./build.sh`
+* `./run.sh`
+
+Direct your WebGL2-capable web browser to `http://localhost:8001`.
+
+### Controls
+
+You can configure a gamepad when opening the menu.
+
+The Keyboard/mouse controls are:
+* `WASD`: move and rotate
+* `Space`: jump
+* `Q` and `E`: strafe left or right
+* Mouse wheel: look up or down
+
+## Background Information
+
+### Voxels
 
 Voxels (VOlume piXELs) are like pixels, but in 3D. Think of a scene being composed by millions of little
 colored cubes instead of triangles, a bit like the Danish plastic toy bricks you might have had as a child.
@@ -27,7 +51,7 @@ Depending on the voxel resolution, scenes can be very detailed, just like pixel 
 In this engine, the surface material (color, texture, bumps, reflectivity) of each voxel is controllable by
 code, and can be pretty detailed as well. The surface can even be animated.
 
-## Ray Marching and Ray Tracing
+### Ray Marching and Ray Tracing
 
 Ray marching is a technique where for each pixel on the screen, you shoot a ray of vision from
 the camera into the scene, in order to determine the color of that pixel. When the ray hits an
@@ -48,13 +72,13 @@ resolution of the screen is limited, the amount of voxels does not have an impac
 (provided that you get the vast amount of voxels to the GPU fast enough). This allows for very detailed graphics
 without a loss of performance.
 
-## TASM
+### TASM
 
 TASM (Texture Assembly) is a custom machine language I have designed to be processed by a tiny virtual machine
 in the fragment shader. It lets you write texture code to files, which are then loaded and processed
 in the shader.
 
-### How can TASM even be processed in the shader?
+#### How can TASM even be processed in the shader?
 
 Short answer: it can't.
 
