@@ -1,0 +1,13 @@
+{
+  "name": "project-isekai",
+  "version": "1.0.0",
+  "description": "A playground for wandering foreign virtual worlds.",
+  "scripts": {
+    "build": "npx asc terrain.ts -o terrain.wasm"
+  },
+  "author": "Martin Grimme",
+  "license": "MIT",
+  "devDependencies": {
+    "assemblyscript": "^0.28.4"
+  }
+}

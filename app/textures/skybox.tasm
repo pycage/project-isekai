@@ -1,0 +1,28 @@
+    ENV distance
+    LD 10000
+    TEST < horizon
+
+    LD 0.3
+    ENV distance
+    LD 10000
+    DIV
+    LD 0.6
+    MUL
+    ADD
+
+    LD 0.7
+    ENV distance
+    LD 10000
+    DIV
+    LD 0.2
+    MUL
+    ADD
+
+    LD 1.0
+
+    USE color
+    END
+
+horizon:
+    LD 0.9 0.9 1.0
+    USE color
