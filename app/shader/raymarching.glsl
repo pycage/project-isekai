@@ -66,8 +66,6 @@ struct ObjectAndDistance
 
 float depthMap = 0.0;
 int cubeDistanceMap = 0;
-float cubeEntryDistanceMap = 0.0;
-float voxelDistanceMap = 0.0;
 bool outlinesMap = false;
 
 bool freeEdge = false;
@@ -120,12 +118,16 @@ const int REG_ENV_UNIVERSE_Z = 35;
 const int REG_STACK = 36;
 const int REG_USER = 56;
 
+const int TASM_TEST_BEGIN = 30;
+const int TASM_TEST_END = 39;
+const int TASM_BIN_BEGIN = 50;
+const int TASM_BIN_END = 79;
+const int TASM_GEN_BEGIN = 100;
+const int TASM_GEN_END = 109;
 
 
-int intr(float v)
-{
-    return int(round(v));
-}
+
+#define SQUARED_DIST(p1, p2) dot(p1 - p2, p1 - p2)
 
 int mapSector(int sector)
 {
@@ -406,13 +408,10 @@ float generateCellularNoise2D(vec2 p, int size, float variant)
     float cubeSize = 1.0 / fsize;
 
     // in which section am I?
-    ivec2 q = ivec2(
-        int(floor(p.x / cubeSize)),
-        int(floor(p.y / cubeSize))
-    );
+    ivec2 q = ivec2(floor(p * fsize));
 
     // check the surroundings
-    float minDist = 9999.0;
+    float minSquaredDist = 1e10;
     for (int x = -1; x < 2; ++x)
     {
         for (int y = -1; y < 2; ++y)
@@ -429,10 +428,11 @@ float generateCellularNoise2D(vec2 p, int size, float variant)
             );
             vec2 samplePoint = (vec2(sampleCube) + randomPoint) * cubeSize;
 
-            minDist = min(distance(samplePoint, p), minDist);
+            float squaredDist = dot(samplePoint - p, samplePoint - p);
+            minSquaredDist = min(squaredDist, minSquaredDist);
         }
     }
-    return minDist / cubeSize;
+    return sqrt(minSquaredDist) / cubeSize;
 }
 
 float generateCellularNoise3D(vec3 p, int size)
@@ -441,14 +441,10 @@ float generateCellularNoise3D(vec3 p, int size)
     float cubeSize = 1.0 / fsize;
 
     // in which section am I?
-    ivec3 q = ivec3(
-        int(floor(p.x / cubeSize)),
-        int(floor(p.y / cubeSize)),
-        int(floor(p.z / cubeSize))
-    );
+    ivec3 q = ivec3(floor(p * fsize));
 
     // check the surroundings
-    float minDist = 9999.0;
+    float minSquaredDist = 1e10;
     for (int x = -1; x < 2; ++x)
     {
         for (int y = -1; y < 2; ++y)
@@ -464,12 +460,12 @@ float generateCellularNoise3D(vec3 p, int size)
                 );
                 vec3 samplePoint = (sampleCube + randomPoint) * cubeSize;
 
-                minDist = min(distance(samplePoint, p), minDist);
-
+                float squaredDist = dot(samplePoint - p, samplePoint - p);
+                minSquaredDist = min(squaredDist, minSquaredDist);
             }
         }
     }
-    return minDist / cubeSize;
+    return sqrt(minSquaredDist) / cubeSize;
 }
 
 float generateCheckerboard(vec2 st)
@@ -768,31 +764,39 @@ mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
     tasmRegisters[REG_ENV_P_Y] = p.y;
     tasmRegisters[REG_ENV_P_Z] = p.z;
 
-    for (int i = 0; i < 128; ++i)
+    const int maxSteps = 128;
+    int i = 0;
+    while (i < maxSteps)
     {
-        tasmProgramTooLong = i == 127;
+        tasmProgramTooLong = i == maxSteps - 1;
         tasmStackOutOfBounds = tasmRegisters[REG_SP] < float(REG_STACK) ||
                                tasmRegisters[REG_SP] >= float(REG_USER);
 
-        if (tasmRegisters[REG_PC] < 0.0 || tasmProgramTooLong || tasmStackOutOfBounds)
+        ++i;
+
+        int pc = int(tasmRegisters[REG_PC]);
+        int stackPointer = int(tasmRegisters[REG_SP]);
+
+        if (pc < 0 || tasmProgramTooLong || tasmStackOutOfBounds)
         {
             // exit
             break;
         }
 
-        instruction = texelFetch(tasmData, ivec2(int(tasmRegisters[REG_PC]), program), 0);
+        instruction = texelFetch(tasmData, ivec2(pc, program), 0);
 
         opCode = int(instruction.r);
         instructionSize = instruction.g;
         tasmRegisters[REG_PARAM1] = instruction.b;
         tasmRegisters[REG_PARAM2] = instruction.a;
 
+
         // caching these appears to add too much overhead and memory spilling, and we're generally
         // better off without caching
         microCodeCopyReg1 = texelFetch(tasmData, ivec2(0, 3000 + opCode), 0);
-        microCodeTest = texelFetch(tasmData, ivec2(1, 3000 + opCode), 0);
-        microCodeBinOp = texelFetch(tasmData, ivec2(2, 3000 + opCode), 0);
-        microCodeGenOp = texelFetch(tasmData, ivec2(3, 3000 + opCode), 0);
+        microCodeTest = opCode >= TASM_TEST_BEGIN && opCode <= TASM_TEST_END ? texelFetch(tasmData, ivec2(1, 3000 + opCode), 0) : vec4(0.0);
+        microCodeBinOp = opCode >= TASM_BIN_BEGIN && opCode <= TASM_BIN_END ? texelFetch(tasmData, ivec2(2, 3000 + opCode), 0) : vec4(0.0);
+        microCodeGenOp = opCode >= TASM_GEN_BEGIN && opCode <= TASM_GEN_END ? texelFetch(tasmData, ivec2(3, 3000 + opCode), 0) : vec4(0.0);
         microCodeAddReg = texelFetch(tasmData, ivec2(4, 3000 + opCode), 0);
         microCodeCopyReg2 = texelFetch(tasmData, ivec2(5, 3000 + opCode), 0);
 
@@ -806,36 +810,43 @@ mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
         offsets = int(microCodeCopyReg1.a);
         srcOffset = (offsets >> 4) - 8;
         destOffset = (offsets & 15) - 8;
-        for (ri = 0; ri < 3; ++ri)
-        {
-            tasmRegisters[destPointer + ri + destOffset] = ri < batchSize ? tasmRegisters[srcPointer + ri + srcOffset]
-                                                                          : tasmRegisters[destPointer + ri + destOffset];
-        }
+
+        if (batchSize >= 1)
+            tasmRegisters[destPointer + destOffset] = tasmRegisters[srcPointer + srcOffset];
+        if (batchSize >= 2)
+            tasmRegisters[destPointer + 1 + destOffset] = tasmRegisters[srcPointer + 1 + srcOffset];
+        if (batchSize >= 3)
+            tasmRegisters[destPointer + 2 + destOffset] = tasmRegisters[srcPointer + 2 + srcOffset];
 
         // test
         op = int(microCodeTest.r);
         if (op > 0)
         {
-            workParam1 = tasmRegisters[int(tasmRegisters[REG_SP]) - 2];
-            workParam2 = tasmRegisters[int(tasmRegisters[REG_SP]) - 1];
-            tasmRegisters[REG_PC] = (op == 1 && workParam1 < workParam2) ||
-                                (op == 2 && workParam1 <= workParam2) ||
-                                (op == 3 && abs(workParam1 - workParam2) < 0.0001) ||
-                                (op == 4 && workParam1 > workParam2) ||
-                                (op == 5 && workParam1 >= workParam2)
-                              ? tasmRegisters[REG_PC]
-                              : tasmRegisters[REG_PARAM1];
+            workParam1 = tasmRegisters[stackPointer - 2];
+            workParam2 = tasmRegisters[stackPointer - 1];
+
+            bool testResult = false;
+            if (op == 1) testResult = workParam1 < workParam2;
+            else if (op == 2) testResult = workParam1 <= workParam2;
+            else if (op == 3) testResult = abs(workParam1 - workParam2) < 0.0001;
+            else if (op == 4) testResult = workParam1 > workParam2;
+            else if (op == 5) testResult = workParam1 >= workParam2;
+
+            if (! testResult)
+            {
+                tasmRegisters[REG_PC] = tasmRegisters[REG_PARAM1];
+            }
         }
 
         // binop
-        op = intr(microCodeBinOp.r);
+        op = int(microCodeBinOp.r);
         if (op > 0)
         {
-            batchSize = intr(microCodeBinOp.g);
+            batchSize = int(microCodeBinOp.g);
             for (ri = 0; ri < 3; ++ri)
             {
-                workParam1 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 2 * batchSize + ri];
-                workParam2 = tasmRegisters[intr(tasmRegisters[REG_SP]) - batchSize + ri];
+                workParam1 = tasmRegisters[stackPointer - 2 * batchSize + ri];
+                workParam2 = tasmRegisters[stackPointer - batchSize + ri];
                 v = (op == 1) ? workParam1 + workParam2 : v;
                 v = (op == 2) ? workParam1 - workParam2 : v;
                 v = (op == 3) ? workParam1 * workParam2 : v;
@@ -843,51 +854,51 @@ mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
                 v = (op == 5) ? min(workParam1, workParam2) : v;
                 v = (op == 6) ? max(workParam1, workParam2) : v;
                 v = (op == 7) ? workParam1 + exp(workParam2) : v;
-                tasmRegisters[intr(tasmRegisters[REG_SP]) - 2 * batchSize + ri] = ri < batchSize ? v
+                tasmRegisters[stackPointer - 2 * batchSize + ri] = ri < batchSize ? v
                                                                                                  : workParam1;
             }
         }
 
         // gen
-        op = intr(microCodeGenOp.r);
+        op = int(microCodeGenOp.r);
         if (op == 5)
         {
-            workParam1 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 1];
-            workParam2 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 2];
-            workParam3 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 3];
-            workParam4 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 4];
+            workParam1 = tasmRegisters[stackPointer - 1];
+            workParam2 = tasmRegisters[stackPointer - 2];
+            workParam3 = tasmRegisters[stackPointer - 3];
+            workParam4 = tasmRegisters[stackPointer - 4];
 
             resultVec = generateBumpNormal(workParam4, workParam3, workParam2, workParam1);
             
-            tasmRegisters[intr(tasmRegisters[REG_SP]) - 4] = resultVec.x;
-            tasmRegisters[intr(tasmRegisters[REG_SP]) - 3] = resultVec.y;
-            tasmRegisters[intr(tasmRegisters[REG_SP]) - 2] = resultVec.z;
+            tasmRegisters[stackPointer - 4] = resultVec.x;
+            tasmRegisters[stackPointer - 3] = resultVec.y;
+            tasmRegisters[stackPointer - 2] = resultVec.z;
         }
         else if (op == 6)
         {
-            workParam1 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 1];
-            workParam2 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 2];
-            workParam3 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 3];
+            workParam1 = tasmRegisters[stackPointer - 1];
+            workParam2 = tasmRegisters[stackPointer - 2];
+            workParam3 = tasmRegisters[stackPointer - 3];
 
             resultVec = vec3(generateMipMap(vec2(workParam3, workParam2), int(workParam1)), 0.0);
             
-            tasmRegisters[intr(tasmRegisters[REG_SP]) - 3] = resultVec.x;
-            tasmRegisters[intr(tasmRegisters[REG_SP]) - 2] = resultVec.y;
+            tasmRegisters[stackPointer - 3] = resultVec.x;
+            tasmRegisters[stackPointer - 2] = resultVec.y;
 
         }
         else if (op == 7)
         {
-            workParam1 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 1];
-            workParam2 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 2];
-            workParam3 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 3];
+            workParam1 = tasmRegisters[stackPointer - 1];
+            workParam2 = tasmRegisters[stackPointer - 2];
+            workParam3 = tasmRegisters[stackPointer - 3];
             tasmRegisters[REG_PARAM1] = lerp(workParam3, workParam2, workParam1);
         }
         else if (op > 0)
         {
-            workParam1 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 1];
-            workParam2 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 2];
-            workParam3 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 3];
-            workParam4 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 4];
+            workParam1 = tasmRegisters[stackPointer - 1];
+            workParam2 = tasmRegisters[stackPointer - 2];
+            workParam3 = tasmRegisters[stackPointer - 3];
+            workParam4 = tasmRegisters[stackPointer - 4];
 
             tasmRegisters[REG_PARAM1] = (op == 1 ? generateLine(vec2(workParam4, workParam3), workParam2, workParam1) : 0.0) +
                                         (op == 2 ? generateCheckerboard(vec2(workParam2, workParam1)) : 0.0) + 
@@ -900,17 +911,19 @@ mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
         tasmRegisters[srcPointer] += microCodeAddReg.g;
 
         // copy n registers from *source to *dest (avoid with batch size = 0)
-        batchSize = intr(microCodeCopyReg2.r);
-        srcPointer = intr(tasmRegisters[int(microCodeCopyReg2.g)]);
-        destPointer = intr(tasmRegisters[int(microCodeCopyReg2.b)]);
+        batchSize = int(microCodeCopyReg2.r);
+        srcPointer = int(tasmRegisters[int(microCodeCopyReg2.g)]);
+        destPointer = int(tasmRegisters[int(microCodeCopyReg2.b)]);
         offsets = int(microCodeCopyReg2.a);
         srcOffset = (offsets >> 4) - 8;
         destOffset = (offsets & 15) - 8;
-        for (ri = 0; ri < 3; ++ri)
-        {
-            tasmRegisters[destPointer + ri + destOffset] = ri < batchSize ? tasmRegisters[srcPointer + ri + srcOffset]
-                                                                          : tasmRegisters[destPointer + ri + destOffset];
-        }
+
+        if (batchSize >= 1)
+            tasmRegisters[destPointer + destOffset] = tasmRegisters[srcPointer + srcOffset];
+        if (batchSize >= 2)
+            tasmRegisters[destPointer + 1 + destOffset] = tasmRegisters[srcPointer + 1 + srcOffset];
+        if (batchSize >= 3)
+            tasmRegisters[destPointer + 2 + destOffset] = tasmRegisters[srcPointer + 2 + srcOffset];
     }
 
     return mat3(
@@ -1061,27 +1074,32 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         return ObjectAndDistance(noObject, 9999.0);
     }
 
-    float gridSize = 1.0;
+    const float gridSize = 1.0;
 
     ObjectLocator objLoc = makeObjectLocator(pT);
     if (cubeHasObject(objLoc, pattern, lodOfSector(cube.sector)))
     {
         WorldLocator obj = makeWorldLocator(cube, objLoc);
-        voxelDistanceMap = distance(origin, resolveCubeLocator(obj.cube) + resolveObjectLocator(obj.object));
         return ObjectAndDistance(obj, distance(origin, p));
     }
 
+    vec3 invRayDirection = 1.0 / abs(rayDirection);
+    vec3 rayDirectionSigns = sign(rayDirection);
+
     vec3 scalingsOnGrid = vec3(
-        rayDirection.x != 0.0 ? 1.0 / abs(rayDirection.x) : 9999.0,
-        rayDirection.y != 0.0 ? 1.0 / abs(rayDirection.y) : 9999.0,
-        rayDirection.z != 0.0 ? 1.0 / abs(rayDirection.z) : 9999.0
+        rayDirection.x != 0.0 ? invRayDirection.x : 9999.0,
+        rayDirection.y != 0.0 ? invRayDirection.y : 9999.0,
+        rayDirection.z != 0.0 ? invRayDirection.z : 9999.0
     );
 
+    vec3 disabler = step(9990.0, scalingsOnGrid) * 9999.0;
+    /*
     vec3 disabler = vec3(
         scalingsOnGrid.x < 9990.0 ? 0.0 : 9999.0,
         scalingsOnGrid.y < 9990.0 ? 0.0 : 9999.0,
         scalingsOnGrid.z < 9990.0 ? 0.0 : 9999.0
     );
+    */
 
     vec3 gridPoint = floor(p / gridSize) * gridSize;
 
@@ -1116,9 +1134,9 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         }
 
         vec3 advanceVec = vec3(
-            advanceX ? sign(rayDirection.x) : 0.0,
-            advanceY ? sign(rayDirection.y) : 0.0,
-            advanceZ ? sign(rayDirection.z) : 0.0
+            advanceX ? rayDirectionSigns.x : 0.0,
+            advanceY ? rayDirectionSigns.y : 0.0,
+            advanceZ ? rayDirectionSigns.z : 0.0
         ) * gridSize;
 
         distsOnGrid += abs(advanceVec);
@@ -1141,7 +1159,6 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         if (cubeHasObject(objLoc, pattern, lodOfSector(cube.sector)))
         {
             WorldLocator obj = makeWorldLocator(cube, objLoc);
-            voxelDistanceMap = distance(origin, resolveCubeLocator(obj.cube) + resolveObjectLocator(obj.object));
             return ObjectAndDistance(obj, distance(origin, p));
         }
     }
@@ -1154,7 +1171,8 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
     WorldLocator noObject;
     ObjectAndDistance result = ObjectAndDistance(noObject, 9999.0);
 
-    float gridSize = 4.0;
+    float maxDistanceSquared = maxDistance * maxDistance;
+    const float gridSize = 4.0;
     vec3 p = origin;
 
     CubeLocator originCube = makeSuperCubeLocator(p, 0);
@@ -1164,17 +1182,23 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
         return result;
     }
 
+    vec3 invRayDirection = 1.0 / abs(rayDirection);
+    vec3 rayDirectionSigns = sign(rayDirection);
+
     vec3 scalingsOnGrid = vec3(
-        rayDirection.x != 0.0 ? 1.0 / abs(rayDirection.x) : 9999.0,
-        rayDirection.y != 0.0 ? 1.0 / abs(rayDirection.y) : 9999.0,
-        rayDirection.z != 0.0 ? 1.0 / abs(rayDirection.z) : 9999.0
+        rayDirection.x != 0.0 ? invRayDirection.x : 9999.0,
+        rayDirection.y != 0.0 ? invRayDirection.y : 9999.0,
+        rayDirection.z != 0.0 ? invRayDirection.z : 9999.0
     );
 
+    vec3 disabler = step(9990.0, scalingsOnGrid) * 9999.0;
+    /*
     vec3 disabler = vec3(
         scalingsOnGrid.x < 9990.0 ? 0.0 : 9999.0,
         scalingsOnGrid.y < 9990.0 ? 0.0 : 9999.0,
         scalingsOnGrid.z < 9990.0 ? 0.0 : 9999.0
     );
+    */
 
     vec3 gridPoint = floor(p / gridSize) * gridSize;
 
@@ -1210,9 +1234,9 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
         }
 
         vec3 advanceVec = vec3(
-            advanceX ? sign(rayDirection.x) : 0.0,
-            advanceY ? sign(rayDirection.y) : 0.0,
-            advanceZ ? sign(rayDirection.z) : 0.0
+            advanceX ? rayDirectionSigns.x : 0.0,
+            advanceY ? rayDirectionSigns.y : 0.0,
+            advanceZ ? rayDirectionSigns.z : 0.0
         ) * gridSize;
 
         if (! advanceX && ! advanceZ && advanceY && (length(advanceVec) == 0.0))
@@ -1235,11 +1259,9 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
                                      (advanceY ? rayLengths.y : 0.0) +
                                      (advanceZ ? rayLengths.z : 0.0)) + epsilon;
 
-        cubeEntryDistanceMap = max(cubeEntryDistanceMap, distance(origin, p));
-
         if (p.x < 0.0 || p.y < 0.0 || p.z < 0.0 ||
             p.x >= float(sectorSize * cubeSize * horizonSize) || p.y >= float(sectorSize * cubeSize * horizonSize) || p.z >= float(sectorSize * cubeSize * horizonSize) ||
-            distance(p, origin) > maxDistance)
+            SQUARED_DIST(p, origin) > maxDistanceSquared)
         {
             // out of view
             break;
@@ -1253,7 +1275,7 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
         }
     }
 
-    cubeDistanceMap = cubeDistanceMap > 0 ? cubeDistanceMap : i;
+    cubeDistanceMap = max(cubeDistanceMap, i);
     return result;
 }
 
@@ -1831,9 +1853,7 @@ void main()
     {
         fragColor = vec4(pixel, 1.0);
         //fragColor = vec4(vec3(float(min(cubeDistanceMap, 100)) / 100.0), 1.0);
-        //fragColor = vec4(vec3(min(cubeEntryDistanceMap, 100.0) / 100.0), 1.0);
         //fragColor = vec4(vec3(min(depthMap, 100.0) / 100.0), 1.0);
-        //fragColor = vec4(vec3(min(voxelDistanceMap, 100.0) / 100.0), 1.0);
         //fragColor = vec4(vec3(outlinesMap ? 0.0 : 1.0), 1.0);
     }
 }
