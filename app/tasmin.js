@@ -88,6 +88,7 @@ const TASM_GEN_WHITE_NOISE = 102;
 const TASM_GEN_CELLULAR_NOISE_2D = 103;
 const TASM_GEN_NORMAL = 104;
 const TASM_GEN_MIPMAP = 105;
+const TASM_GEN_LERP = 106;
 
 const TestMap = {
     "<": TASM_TEST_LT,
@@ -293,6 +294,13 @@ function writeFirmware(arr)
                    REG_PTR_SP, -3 + 2,
                    0, REG_PTR_VOID, 0, REG_PTR_VOID, 0);
 
+    writeMicroCode(arr, TASM_GEN_LERP,
+                   0, REG_PTR_VOID, 0, REG_PTR_VOID, 0,
+                   0, 0, 0, 7,
+                   REG_PTR_SP, -3 + 1,
+                   1, REG_PTR_PARAM1, 0, REG_SP, -1);
+
+
     // USE_COLOR:
     // regadd PTR_SP -3
     // regcopy 3 SP PTR_COLOR
@@ -422,6 +430,12 @@ function compile(tasm)
             }
             byteCode.push(TASM_SREG);
             value1 = registerMap.get(regName);
+
+            // extra values can be loaded on the same line as syntactic sugar
+            for (let n = 2; n < parts.length; ++n)
+            {
+                extraLines.push("SREG " + parts[n]);
+            }
             break;
         }
         case "LREG":
@@ -433,6 +447,12 @@ function compile(tasm)
             }
             byteCode.push(TASM_LREG);
             value1 = registerMap.get(regName);
+
+            // extra values can be loaded on the same line as syntactic sugar
+            for (let n = 2; n < parts.length; ++n)
+            {
+                extraLines.push("LREG " + parts[n]);
+            }
             break;
         }
 
@@ -450,12 +470,12 @@ function compile(tasm)
                 value1 = REG_ENV_ST_X;
                 extraLines.push("ENV st_y");
             }
-            else if (name === "ST_X")
+            else if (name === "ST.X" || name === "ST_X")
             {
                 byteCode.push(TASM_LREG);
                 value1 = REG_ENV_ST_X;
             }
-            else if (name === "ST_Y")
+            else if (name === "ST.Y" || name === "ST_Y")
             {
                 byteCode.push(TASM_LREG);
                 value1 = REG_ENV_ST_Y;
@@ -465,32 +485,32 @@ function compile(tasm)
                 byteCode.push(TASM_LREG);
                 value1 = REG_ENV_RAY_DISTANCE;
             }
-            else if (name === "P_X")
+            else if (name === "P.X" || name === "P_X")
             {
                 byteCode.push(TASM_LREG);
                 value1 = REG_ENV_P_X;
             }
-            else if (name === "P_Y")
+            else if (name === "P.Y" || name === "P_Y")
             {
                 byteCode.push(TASM_LREG);
                 value1 = REG_ENV_P_Y;
             }
-            else if (name === "P_Z")
+            else if (name === "P.Z" || name === "P_Z")
             {
                 byteCode.push(TASM_LREG);
                 value1 = REG_ENV_P_Z;
             }
-            else if (name === "UNIVERSE_X")
+            else if (name === "UNIVERSE.X" || name === "UNIVERSE_X")
             {
                 byteCode.push(TASM_LREG);
                 value1 = REG_ENV_UNIVERSE_X;
             }
-            else if (name === "UNIVERSE_Y")
+            else if (name === "UNIVERSE.Y" || name === "UNIVERSE_Y")
             {
                 byteCode.push(TASM_LREG);
                 value1 = REG_ENV_UNIVERSE_Y;
             }
-            else if (name === "UNIVERSE_Z")
+            else if (name === "UNIVERSE.Z" || name === "UNIVERSE_Z")
             {
                 byteCode.push(TASM_LREG);
                 value1 = REG_ENV_UNIVERSE_Z;
@@ -504,6 +524,7 @@ function compile(tasm)
             break;
         }
 
+        case "IFNOT":
         case "TEST":
         {
             byteCode.push(TestMap[parts[1]]);
@@ -615,6 +636,10 @@ function compile(tasm)
             else if (name === "MIPMAP")
             {
                 byteCode.push(TASM_GEN_MIPMAP);
+            }
+            else if (name === "LERP")
+            {
+                byteCode.push(TASM_GEN_LERP);
             }
             break;
         }

@@ -77,8 +77,10 @@ vec3 debugColor = vec3(1.0, 0.0, 0.0);
 
 float randomSeed = 0.0;
 
+bool tasmProgramTooLong = false;
+bool tasmStackOutOfBounds = false;
 
-float[64] tasmRegisters;
+float[72] tasmRegisters;
 const int REG_VOID = 0;
 const int REG_PTR_VOID = 1;
 const int REG_PC = 2;
@@ -714,9 +716,6 @@ mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
     // instructions are broken down into microcode defined by the TASM firmware.
     // The GPU processes the microcode only.
 
-    bool programTooLong = false;
-    bool stackOutOfBounds = false;
-
     int batchSize = 0;
     int srcPointer = 0;
     int destPointer = 0;
@@ -769,13 +768,13 @@ mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
     tasmRegisters[REG_ENV_P_Y] = p.y;
     tasmRegisters[REG_ENV_P_Z] = p.z;
 
-    for (int i = 0; i < 96; ++i)
+    for (int i = 0; i < 128; ++i)
     {
-        programTooLong = i == 95;
-        stackOutOfBounds = tasmRegisters[REG_SP] < float(REG_STACK) ||
-                           tasmRegisters[REG_SP] >= float(REG_USER);
+        tasmProgramTooLong = i == 127;
+        tasmStackOutOfBounds = tasmRegisters[REG_SP] < float(REG_STACK) ||
+                               tasmRegisters[REG_SP] >= float(REG_USER);
 
-        if (tasmRegisters[REG_PC] < 0.0 || programTooLong || stackOutOfBounds)
+        if (tasmRegisters[REG_PC] < 0.0 || tasmProgramTooLong || tasmStackOutOfBounds)
         {
             // exit
             break;
@@ -876,6 +875,13 @@ mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
             tasmRegisters[intr(tasmRegisters[REG_SP]) - 2] = resultVec.y;
 
         }
+        else if (op == 7)
+        {
+            workParam1 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 1];
+            workParam2 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 2];
+            workParam3 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 3];
+            tasmRegisters[REG_PARAM1] = lerp(workParam3, workParam2, workParam1);
+        }
         else if (op > 0)
         {
             workParam1 = tasmRegisters[intr(tasmRegisters[REG_SP]) - 1];
@@ -908,11 +914,7 @@ mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
     }
 
     return mat3(
-        vec3(
-            programTooLong || stackOutOfBounds ? 1.0 : tasmRegisters[REG_COLOR_R],
-            programTooLong ? 0.0 : stackOutOfBounds ? 1.0 : tasmRegisters[REG_COLOR_G],
-            programTooLong ? 1.0 : stackOutOfBounds ? 0.0 : tasmRegisters[REG_COLOR_B]
-        ),
+        vec3(tasmRegisters[REG_COLOR_R], tasmRegisters[REG_COLOR_G], tasmRegisters[REG_COLOR_B]),
         vec3(tasmRegisters[REG_NORMAL_X], tasmRegisters[REG_NORMAL_Y], tasmRegisters[REG_NORMAL_Z]),
         vec3(tasmRegisters[REG_ATTRIB_1], tasmRegisters[REG_ATTRIB_2], tasmRegisters[REG_ATTRIB_3])
     );
@@ -1264,11 +1266,9 @@ vec4 skyBox(vec3 origin, vec3 rayDirection)
 {
     vec3 hitPoint = abs(rayDirection.y) > 0.001 ? origin + rayDirection * ((1000.0 - origin.y) / rayDirection.y)
                                                 : origin + rayDirection;
-    // TODO: move to TASM
-    vec3 timedHitPoint = hitPoint + vec3(float(timems) / 30000.0, 0.0, 0.0);
 
-    vec3 color = enableTasm ? processTasm(0, (timedHitPoint.xz / 10000.0), hitPoint, distance(origin, hitPoint))[0]
-                            : vec3(0.0);
+    vec3 color = enableTasm && rayDirection.y > 0.0 ? processTasm(0, hitPoint.xz, hitPoint, distance(origin, hitPoint))[0]
+                                                    : vec3(0.0);
 
     return vec4(color, 1.0);
 }
@@ -1807,7 +1807,15 @@ void main()
         pixel = vec3(0.0, 0.0, 0.0);
     }
 
-    if (debug == 1)
+    if (tasmProgramTooLong)
+    {
+        fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+    }
+    else if (tasmStackOutOfBounds)
+    {
+        fragColor = vec4(1.0, 1.0, 0.0, 1.0);
+    }
+    else if (debug == 1)
     {
         fragColor = vec4(debugColor, 1.0);
     }
