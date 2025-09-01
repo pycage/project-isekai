@@ -1,13 +1,12 @@
 #version 300 es
 precision mediump float;
 precision highp int;    /* Android needs this for 32 bit precision */
-precision highp isampler2D;
+precision highp usampler2D;
 
 // world configuration
 const int horizonSize = 5;
 const int sectorSize = 16;
 const int cubeSize = 4;
-const int cubeDataStride = 32;
 const int worldPageSize = 4096;
 const int sectorLines = 32;
 
@@ -33,7 +32,7 @@ uniform float screenWidth;
 uniform float screenHeight;
 
 uniform int numLights;
-uniform isampler2D worldData;
+uniform usampler2D worldData;
 uniform sampler2D lightsData;
 uniform sampler2D tasmData;
 
@@ -129,9 +128,19 @@ const int TASM_GEN_END = 109;
 
 #define SQUARED_DIST(p1, p2) dot(p1 - p2, p1 - p2)
 
+/* Convers a linear address to a pixel location in the data texture.
+ */
+ivec2 textureAddress(uint address)
+{
+    return ivec2(
+        address % uint(worldPageSize),
+        address / uint(worldPageSize)
+    );
+}
+
 int mapSector(int sector)
 {
-    return texelFetch(worldData, ivec2(sector / 4, worldPageSize - 1), 0)[sector % 4];
+    return int(texelFetch(worldData, ivec2(sector / 4, worldPageSize - 1), 0)[sector % 4]);
 }
 
 ivec3 sectorLocation(int sector)
@@ -188,8 +197,8 @@ CubeLocator makeSuperCubeLocator(vec3 v, int level)
 bool isSuperCubeEmpty(CubeLocator superCube, int level)
 {
     int index = superCube.x * sectorSize * sectorSize + superCube.y * sectorSize + superCube.z;
-    ivec4 data = texelFetch(worldData, ivec2(index / 4, 3000 + level), 0);
-    return data[index % 4] == 0;
+    uvec4 data = texelFetch(worldData, ivec2(index / 4, 3000 + level), 0);
+    return data[index % 4] == 0u;
 }
 
 ObjectLocator makeObjectLocator(vec3 locInCube)
@@ -237,34 +246,49 @@ mat4 cubeTrafoInverse(CubeLocator cube)
     );
 }
 
-ivec2 cubeDataOffset(CubeLocator cube)
+/* Returns the data offset for the given sector.
+ */
+uint sectorDataOffset(int sector)
+{
+    return uint(sectorLines * mapSector(sector) * worldPageSize);
+}
+
+/* Returns the data offset for the given cube.
+ */
+uint cubeDataOffset(CubeLocator cube)
 {
     int sectorLod = getSectorLod(lodOfSector(cube.sector));
     int sectorSizeLod = sectorSize / (1 << sectorLod);
-
-    // read sector map
-    int sectorLine = sectorLines * mapSector(cube.sector);
 
     ivec3 cubeLoc = ivec3(cube.x, cube.y, cube.z);
     cubeLoc /= (1 << sectorLod);
 
     int index = cubeLoc.x * sectorSizeLod * sectorSizeLod + cubeLoc.y * sectorSizeLod + cubeLoc.z;
-    int cubesPerLine = worldPageSize / cubeDataStride;
-    return ivec2(
-        (index % cubesPerLine) * cubeDataStride,
-        sectorLine + index / cubesPerLine
-    );
+    
+    return uint(index);
 }
 
-int objectDataEntry(WorldLocator worldLoc)
+/* Returns the data offset for the voxels of a cube.
+ */
+uint voxelDataOffset(uint address)
+{
+    return uint(sectorSize * sectorSize * sectorSize) + address * 16u;
+}
+
+uint voxelType(WorldLocator worldLoc)
 {
     int cubeLod = getCubeLod(lodOfSector(worldLoc.cube.sector));
     int bitsPerCoord = 2 / (1 << cubeLod);
     ivec3 loc = ivec3(worldLoc.object.x, worldLoc.object.y, worldLoc.object.z);
     loc /= (1 << cubeLod);
-    int objLoc = (loc.x << (bitsPerCoord + bitsPerCoord)) + (loc.y << bitsPerCoord) + loc.z;
-    ivec2 offset = cubeDataOffset(worldLoc.cube) + ivec2(2 + objLoc / 4, 0);
-    return texelFetch(worldData, offset, 0)[objLoc % 4];
+    int objIndex = (loc.x << (bitsPerCoord + bitsPerCoord)) + (loc.y << bitsPerCoord) + loc.z;
+    
+    uint sectorOffset = sectorDataOffset(worldLoc.cube.sector);
+    uint cubeOffset = sectorOffset + cubeDataOffset(worldLoc.cube);
+    uint address = texelFetch(worldData, textureAddress(cubeOffset), 0).b;
+    uint voxelOffset = sectorOffset + voxelDataOffset(address);
+
+    return texelFetch(worldData, textureAddress(voxelOffset + uint(objIndex / 4)), 0)[objIndex % 4];
 }
 
 vec2 aabbMinMax(float origin, float dir, float boxMin, float boxMax)
@@ -993,7 +1017,7 @@ vec3 getSurfaceNormal(vec3 p)
  */
 mat3 getObjectMaterial(WorldLocator obj, vec3 p, vec3 worldP, float travelDist)
 {
-    int materialId = objectDataEntry(obj);
+    int materialId = int(voxelType(obj));
     vec2 st = p.xy;
 
     // position texture on cube
@@ -1014,15 +1038,13 @@ mat3 getObjectMaterial(WorldLocator obj, vec3 p, vec3 worldP, float travelDist)
                         );
 }
 
-bool cubeHasObject(ObjectLocator objLoc, ivec4 pattern, int lod)
+bool cubeHasObject(ObjectLocator objLoc, uvec2 pattern, int lod)
 {
     int cubeLod = getCubeLod(lod);
     int bitsPerCoord = 2 / (1 << cubeLod);
 
-    int patternHi = pattern.r;
-    int patternHiMid = pattern.g;
-    int patternLoMid = pattern.b;
-    int patternLo = pattern.a;
+    uint patternHi = pattern.r;
+    uint patternLo = pattern.g;
 
     ivec3 loc = ivec3(objLoc.x, objLoc.y, objLoc.z);
     loc /= (1 << cubeLod);
@@ -1030,10 +1052,8 @@ bool cubeHasObject(ObjectLocator objLoc, ivec4 pattern, int lod)
     int n = (loc.x << (bitsPerCoord + bitsPerCoord)) +
             (loc.y << bitsPerCoord) +
             loc.z;
-    return n < 16 ? (patternLo & (1 << n)) > 0
-                  : n < 32 ? (patternLoMid & (1 << (n - 16))) > 0
-                           : n < 48 ? (patternHiMid & (1 << (n - 32))) > 0
-                                    : (patternHi & (1 << (n - 48))) > 0;
+    return n < 32 ? (patternLo & uint(1 << n)) > 0u
+                  : (patternHi & uint(1 << (n - 32))) > 0u;
 }
 
 bool hasObjectAt(vec3 p)
@@ -1043,19 +1063,19 @@ bool hasObjectAt(vec3 p)
     vec3 pT = (m * vec4(p, 1.0)).xyz;
     ObjectLocator objLoc = makeObjectLocator(pT);
 
-    ivec2 offset = cubeDataOffset(cube);
-    ivec4 pattern = texelFetch(worldData, offset, 0);
+    uint offset = sectorDataOffset(cube.sector) + cubeDataOffset(cube);
+    uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
 
-    return cubeHasObject(objLoc, pattern, lodOfSector(cube.sector));
+    return cubeHasObject(objLoc, patternAndAddress.rg, lodOfSector(cube.sector));
 }
 
 ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint, vec3 rayDirection)
 {
     WorldLocator noObject;
 
-    ivec2 offset = cubeDataOffset(cube);
-    ivec4 pattern = texelFetch(worldData, offset, 0);
-    if (pattern.r + pattern.g + pattern.b + pattern.a == 0)
+    uint offset = sectorDataOffset(cube.sector) + cubeDataOffset(cube);
+    uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
+    if (patternAndAddress.r + patternAndAddress.g == 0u)
     {
         // this cube is empty
         return ObjectAndDistance(noObject, 9999.0);
@@ -1077,7 +1097,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     const float gridSize = 1.0;
 
     ObjectLocator objLoc = makeObjectLocator(pT);
-    if (cubeHasObject(objLoc, pattern, lodOfSector(cube.sector)))
+    if (cubeHasObject(objLoc, patternAndAddress.rg, lodOfSector(cube.sector)))
     {
         WorldLocator obj = makeWorldLocator(cube, objLoc);
         return ObjectAndDistance(obj, distance(origin, p));
@@ -1156,7 +1176,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         }
 
         ObjectLocator objLoc = makeObjectLocator(pT);
-        if (cubeHasObject(objLoc, pattern, lodOfSector(cube.sector)))
+        if (cubeHasObject(objLoc, patternAndAddress.rg, lodOfSector(cube.sector)))
         {
             WorldLocator obj = makeWorldLocator(cube, objLoc);
             return ObjectAndDistance(obj, distance(origin, p));

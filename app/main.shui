@@ -953,6 +953,7 @@ Document {
             canvas.setUniform("int", "enableOutlines", outlinesCheckBox.checked);
             canvas.setUniform("mat4", "cameraTrafo", cameraTrafo);
             canvas.setUniform("vec3", "universeLocation", mat.sub(canvas.universeLocation, mat.vec(128, 128, 128)));
+            world.uploadData(canvas);
 
             if (measuringPending)
             {

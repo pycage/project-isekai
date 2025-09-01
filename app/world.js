@@ -10,16 +10,18 @@ const SECTOR_SIZE = 16;
 // the side-length of a cube in voxels
 const CUBE_SIZE = 4;
 const SECTOR_LINES = 32;
+const VOXEL_DATA_OFFSET = SECTOR_SIZE * SECTOR_SIZE * SECTOR_SIZE;
+const CUBE_VOXEL_STRIDE = CUBE_SIZE * CUBE_SIZE * CUBE_SIZE;
 
-function readInt32Array(ptr, memory)
+function readUint32Array(ptr, memory)
 {
   const memU32 = new Uint32Array(memory.buffer);
   
   const bufPtr = memU32[ptr / 4];
   const length = memU32[(ptr + 8) / 4];
 
-  const int32Array = new Int32Array(memory.buffer, bufPtr, length / 4);
-  return int32Array;
+  const uint32Array = new Uint32Array(memory.buffer, bufPtr, length / 4);
+  return uint32Array;
 }
 
 function readArrayAt(arr, pos, size)
@@ -177,10 +179,9 @@ class World extends core.Object
         const horizonCenter = Math.floor(HORIZON_SIZE / 2);
 
         d.set(this, {
-            worldData: new Int32Array(4096 * 4096 * 4),
+            worldData: new Uint32Array(4096 * 4096 * 4),
+            updateQueue: [],
             sectorMap: [ ],  // array of { address, universeLocation }
-            cubeDataStride: 32 * 4,
-            objectSize: 1,
             centerSector: makeSectorIndex(horizonCenter, horizonCenter, horizonCenter)
         });
 
@@ -206,26 +207,39 @@ class World extends core.Object
         return d.get(this).sectorMap[sector].address;
     }
 
-    /* Returns the data offset for accessing a cube.
+    /* Returns the sector data offset.
      */
-    cubeDataOffset(cube)
+    sectorDataOffset(sector)
     {
-        const priv = d.get(this);
-   
+        return SECTOR_LINES * this.mapSector(sector) * 4096 * 4;
+    }
+
+    /* Returns the data offset for accessing a cube, relative to the sector offset.
+     */
+    cubeDataOffset(cubeIndex)
+    {
+        return cubeIndex * 4;
+    }
+
+    /* Returns the offset into the cube voxel data for the given address, relative to the
+     * sector offset;
+     */
+    voxelDataOffset(address)
+    {
+        return VOXEL_DATA_OFFSET + address * CUBE_VOXEL_STRIDE;
+    }
+
+    cubeIndex(cube)
+    {
         const lod = lodOfSector(cube.sector);
         const sectorLod = Math.max(0, lod - 2);
-        const sectorSizeLod = SECTOR_SIZE / (1 << sectorLod);
-
-        const sectorLine = SECTOR_LINES * this.mapSector(cube.sector);
+        const sectorSizeWithLod = SECTOR_SIZE / (1 << sectorLod);
 
         const cx = Math.floor(cube.x / (1 << sectorLod));
         const cy = Math.floor(cube.y / (1 << sectorLod));
         const cz = Math.floor(cube.z / (1 << sectorLod));
 
-        const index = cx * sectorSizeLod * sectorSizeLod + cy * sectorSizeLod + cz;
-
-        return sectorLine * 4096 * 4 +
-               index * priv.cubeDataStride;
+        return cx * sectorSizeWithLod * sectorSizeWithLod + cy * sectorSizeWithLod + cz;
     }
 
     /* Returns the sector at the given world location.
@@ -381,12 +395,15 @@ class World extends core.Object
         const cubeLod = Math.min(lod, 2);
         const bitsPerCoord = 2 / (1 << cubeLod);
         
-        const cubeOffset = this.cubeDataOffset(cube);
+        const cubeIndex = this.cubeIndex(cube);
+        const sectorOffset = this.sectorDataOffset(cube.sector);
+        const cubeOffset = sectorOffset + this.cubeDataOffset(cubeIndex);
         let patternHi = priv.worldData[cubeOffset];
-        let patternHiMid = priv.worldData[cubeOffset + 1];
-        let patternLoMid = priv.worldData[cubeOffset + 2];
-        let patternLo = priv.worldData[cubeOffset + 3];
-        
+        let patternLo = priv.worldData[cubeOffset + 1];
+        const address = priv.worldData[cubeOffset + 2];
+
+        const voxelOffset = this.voxelDataOffset(address);
+
         let objects = [];
         for (let x = 0; x < 4; ++x)
         {
@@ -403,28 +420,20 @@ class World extends core.Object
                                 lz;
 
                     let haveObject = false;
-                    if (idx < 16)
+                    if (idx < 32)
                     {
                         haveObject = patternLo & (1 << idx);
                     }
-                    else if (idx < 32)
-                    {
-                        haveObject = patternLoMid & (1 << (idx - 16));
-                    }
-                    else if (idx < 48)
-                    {
-                        haveObject = patternHiMid & (1 << (idx - 32));
-                    }
                     else
                     {
-                        haveObject = patternHi & (1 << (idx - 48));
+                        haveObject = patternHi & (1 << (idx - 32));
                     }
                     if (! haveObject)
                     {
                         continue;
                     }
 
-                    const objOffset = cubeOffset + 8 + idx * priv.objectSize;
+                    const objOffset = sectorOffset + voxelOffset + idx;
 
                     const p = mat.vec(x, y, z);
                     const objTrafo = mat.translationM(p);
@@ -486,7 +495,7 @@ class World extends core.Object
         //console.log("Generating sector " + sector + " around " + JSON.stringify(universeLocation) + " with LOD " + lod);
         const now = Date.now();
         const ptr = terrain.generateSector(universeLocation[0][0], universeLocation[1][0], universeLocation[2][0], lod);
-        const sectorData = readInt32Array(ptr, terrain.memory);
+        const sectorData = readUint32Array(ptr, terrain.memory);
         const sectorLine = SECTOR_LINES * this.mapSector(sector);
         d.get(this).worldData.set(sectorData, sectorLine * 4096 * 4);
         //console.log("took " + (Date.now() - now) + "ms");
@@ -574,14 +583,16 @@ class World extends core.Object
         const unitedRanges = uniteRanges(dataRanges);
         unitedRanges.sort((r1, r2) => r1[0] - r2[0]);
         console.log(unitedRanges.length + " United: " + JSON.stringify(unitedRanges));
-        const now = Date.now();
+        //const now = Date.now();
         unitedRanges.forEach(range =>
         {
-            const [begin, end] = range;
-            const data = priv.worldData.subarray(begin * 4096 * 4, end * 4096 * 4);
-            canvas.updateSampler("worldData", 0, begin, 4096, end - begin, data);
+            priv.updateQueue.push(range);
+            //const [begin, end] = range;
+            //const data = priv.worldData.subarray(begin * 4096 * 4, end * 4096 * 4);
+            //canvas.updateSampler("worldData", 0, begin, 4096, end - begin, data);
+
         });
-        console.log("Uploaded in " + (Date.now() - now) + "ms");
+        //console.log("Uploaded in " + (Date.now() - now) + "ms");
 
         
         //console.log("AFTER: " + JSON.stringify(freedAddressesPerLod));
@@ -590,6 +601,20 @@ class World extends core.Object
         // write sector map
         this.writeSectorMap();
         canvas.updateSampler("worldData", 0, 4095, 4096, 1, priv.worldData.subarray(4095 * 4096 * 4));
+    }
+
+    uploadData(canvas)
+    {
+        const priv = d.get(this);
+        if (priv.updateQueue.length > 0)
+        {
+            const now = Date.now();
+            const range = priv.updateQueue.shift();
+            const [begin, end] = range;
+            const data = priv.worldData.subarray(begin * 4096 * 4, end * 4096 * 4);
+            canvas.updateSampler("worldData", 0, begin, 4096, end - begin, data);
+            console.log("Uploaded in " + (Date.now() - now) + "ms");
+        }
     }
 
     writeSectorMap()

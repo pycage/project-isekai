@@ -2,8 +2,6 @@ import { mandelbrot } from  "./mandelbrot.ts";
 
 const CUBE_SIZE: i32 = 4;
 const SECTOR_SIZE: i32 = 16;
-const CUBE_STRIDE: i32 = 32 * 4;
-const OBJECT_STRIDE: i32 = 1;
 const SECTOR_LINES: i32 = 32;
 
 /*
@@ -41,7 +39,17 @@ function cellularNoise2D(px, py, size)
 }
 */
 
-function addObject(data: Int32Array, type: i32, x: i32, y: i32, z: i32, lod: i32): void
+function cubeDataOffset(cubeIndex: i32): i32
+{
+    return cubeIndex * 4;
+}
+
+function voxelDataOffset(address: i32): i32
+{
+    return (SECTOR_SIZE * SECTOR_SIZE * SECTOR_SIZE) * 4 + address * CUBE_SIZE * CUBE_SIZE * CUBE_SIZE;
+}
+
+function addObject(data: Uint32Array, type: i32, x: i32, y: i32, z: i32, lod: i32): void
 {
     const cubeLod: i32 = min(lod, 2);
     const sectorLod: i32 = max(0, lod - 2);
@@ -55,44 +63,34 @@ function addObject(data: Int32Array, type: i32, x: i32, y: i32, z: i32, lod: i32
 
     const cubeIndex = cubeX * sectorSize * sectorSize + cubeY * sectorSize + cubeZ;
 
-    const cubeDataOffset = cubeIndex * CUBE_STRIDE;
+    const offset = cubeDataOffset(cubeIndex);
 
-    let patternHi: u16 = <u16> data[cubeDataOffset];
-    let patternHiMid: u16 = <u16> data[cubeDataOffset + 1];
-    let patternLoMid: u16 = <u16> data[cubeDataOffset + 2];
-    let patternLo: u16 = <u16> data[cubeDataOffset + 3];
+    let patternHi: u32 = <u32> data[offset];
+    let patternLo: u32 = <u32> data[offset + 1];
+    const address: i32 = cubeIndex;
 
     const objIndex = ((x - cubeX * cubeSize) << (bitsPerCoord + bitsPerCoord)) +
                      ((y - cubeY * cubeSize) << bitsPerCoord) +
                      (z - cubeZ * cubeSize);
-    const objDataOffset = cubeDataOffset + 2 * 4 + objIndex * OBJECT_STRIDE;
-
-    if (objIndex < 16)
+    const objDataOffset = voxelDataOffset(address) + objIndex;
+                          
+    if (objIndex < 32)
     {
-        patternLo |= 1 << <u16> objIndex;
-    }
-    else if (objIndex < 32)
-    {
-        patternLoMid |= 1 << (<u16> objIndex - 16);
-    }
-    else if (objIndex < 48)
-    {
-        patternHiMid |= 1 << (<u16> objIndex - 32);
+        patternLo |= 1 << <u32> objIndex;
     }
     else
     {
-        patternHi |= 1 << (<u16> objIndex - 48);
+        patternHi |= 1 << (<u32> objIndex - 32);
     }
 
-    data[cubeDataOffset] = patternHi;
-    data[cubeDataOffset + 1] = patternHiMid;
-    data[cubeDataOffset + 2] = patternLoMid;
-    data[cubeDataOffset + 3] = patternLo;
+    data[offset] = patternHi;
+    data[offset + 1] = patternLo;
+    data[offset + 2] = address;
 
     data[objDataOffset] = type;
 }
 
-export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Int32Array
+export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Uint32Array
 {
     // a sector consists of SECTOR_SIZE * SECTOR_SIZE * SECTOR_SIZE cubes
 
@@ -101,7 +99,7 @@ export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Int32Array
     const cubeSize: i32 = CUBE_SIZE / (1 << cubeLod);
     const sectorSize: i32 = SECTOR_SIZE / (1 << sectorLod);
 
-    const data = new Int32Array(SECTOR_LINES * 4096 * 4); //SECTOR_SIZE * SECTOR_SIZE * SECTOR_SIZE * CUBE_STRIDE);
+    const data = new Uint32Array(SECTOR_LINES * 4096 * 4);
     data.fill(0, 0);
 
     const fullResScale = SECTOR_SIZE * CUBE_SIZE;
