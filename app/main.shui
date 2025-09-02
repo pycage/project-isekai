@@ -629,6 +629,25 @@ Document {
 
             Label {
                 fillWidth: true
+                text: "Channel"
+            }
+
+            SelectionBox {
+                id: channelSelector
+                fillWidth: true
+                model: ListModel { data: ["Image", "Depth", "Normals", "Lighting", "Colors", "Outlines"] }
+                selection: 0
+            }
+        }
+
+        Box {
+            margins: 4
+            fillWidth: true
+            height: theme.itemHeightMedium
+            layout: "center-row"
+
+            Label {
+                fillWidth: true
                 text: "Render Quality"
             }
 
@@ -703,7 +722,7 @@ Document {
 
                 fillWidth: true
                 minValue: 1
-                maxValue: 32
+                maxValue: 8
                 stepSize: 1
                 value: 2
             }
@@ -768,24 +787,6 @@ Document {
                 id: tasmCheckBox
 
                 checked: true
-            }
-        }
-
-        Box {
-            margins: 4
-            fillWidth: true
-            height: theme.itemHeightMedium
-            layout: "center-row"
-
-            Label {
-                fillWidth: true
-                text: "Visualize Normals"
-            }
-
-            Switch {
-                id: normalsCheckBox
-
-                checked: false
             }
         }
 
@@ -954,11 +955,11 @@ Document {
             canvas.setUniform("int", "timems", Math.floor(now * 1000));
             canvas.setUniform("float", "screenWidth", canvas.originalWidth);
             canvas.setUniform("float", "screenHeight", canvas.originalHeight);
+            canvas.setUniform("int", "renderChannel", channelSelector.selection);
             canvas.setUniform("int", "enableTasm", tasmCheckBox.checked);
-            canvas.setUniform("int", "showNormals", normalsCheckBox.checked);
             canvas.setUniform("int", "enableShadows", shadingCheckBox.checked);
             canvas.setUniform("int", "enableAmbientOcclusion", ambientOcclusionCheckBox.checked);
-            canvas.setUniform("float", "fogDensity", fogDensitySlider.seekValue / 10000.0);
+            //canvas.setUniform("float", "fogDensity", fogDensitySlider.seekValue / 10000.0);
             canvas.setUniform("int", "marchingDepth", Math.floor(marchingDepthSlider.seekValue));
             canvas.setUniform("int", "tracingDepth", Math.floor(tracingDepthSlider.seekValue));
             canvas.setUniform("int", "enableOutlines", outlinesCheckBox.checked);

@@ -19,12 +19,12 @@ uniform vec3 universeLocation;
 uniform int marchingDepth;
 uniform int tracingDepth;
 
+uniform int renderChannel;
 uniform float fogDensity;
 uniform bool enableShadows;
 uniform bool enableAmbientOcclusion;
 uniform bool enableOutlines;
 uniform bool enableTasm;
-uniform bool showNormals;
 
 uniform mat4 cameraTrafo;
 
@@ -76,6 +76,13 @@ float randomSeed = 0.0;
 
 bool tasmProgramTooLong = false;
 bool tasmStackOutOfBounds = false;
+
+const int IMAGE_CHANNEL = 0;
+const int DEPTH_BUFFER_CHANNEL = 1;
+const int NORMALS_CHANNEL = 2;
+const int LIGHTING_CHANNEL = 3;
+const int COLORS_CHANNEL = 4;
+const int OUTLINES_CHANNEL = 5;
 
 float[72] tasmRegisters;
 const int REG_VOID = 0;
@@ -1557,6 +1564,107 @@ vec3 getCorrectedBoxNormals(WorldLocator obj, vec3 p, vec3 rayDirection)
     return surfaceNormal;
 }
 
+ObjectAndDistance castRay(vec3 origin, vec3 rayDirection)
+{
+    return raymarch(origin, rayDirection, 9999.0);
+}
+
+mat3 computeMaterial(vec3 origin, vec3 rayDirection, WorldLocator obj, float distance)
+{
+    vec3 p = origin + rayDirection * distance;
+    vec3 pT = transformPoint(p, obj);
+
+    return getObjectMaterial(obj, pT, p, distance);
+}
+
+vec3 computeNormalVector(vec3 origin, vec3 rayDirection, WorldLocator obj, float distance, vec3 bumpNormal)
+{
+    vec3 p = origin + rayDirection * distance;
+    vec3 pT = transformPoint(p, obj);
+
+    vec3 surfaceNormal = getCorrectedBoxNormals(obj, pT, rayDirection);
+
+    mat4 surfaceTrafo = createSurfaceTrafo(surfaceNormal);
+    vec3 bumpNormalT = (surfaceTrafo * vec4(bumpNormal, 1.0)).xyz;
+
+    return transformNormalOW(bumpNormalT, obj);
+}
+
+vec3 computeLighting(vec3 origin, vec3 rayDirection, WorldLocator obj, float distance, vec3 surfaceNormal)
+{
+    vec3 p = origin + rayDirection * distance;
+    vec3 lighting = phongShading(origin, p, surfaceNormal, 1.0);
+
+    mat4 surfaceTrafo = createSurfaceTrafo(surfaceNormal);
+
+    lighting *= enableAmbientOcclusion ? 1.0 - ambientOcclusion(p, rayDirection, obj, surfaceTrafo, 0.1) * 0.5
+                                       : 1.0;
+
+    return lighting;
+}
+
+mat3 traceRay(vec3 origin, vec3 rayDirection, float distance, vec3 surfaceNormal, float reflectivity)
+{
+    vec3 currentOrigin = origin + rayDirection * distance;
+    vec3 color = vec3(1.0);
+    vec3 lighting = vec3(1.0);
+
+    for (int traceCount = 0; traceCount < 8; ++traceCount)
+    {
+        if (traceCount == tracingDepth)
+        {
+            // tracing depth exceeded
+            break;
+        }
+
+        vec3 p = currentOrigin;
+
+        if (reflectivity > 0.1)
+        {
+            // we're not finished yet - reflect the ray
+            float fresnel = pow(clamp(1.0 - dot(surfaceNormal, rayDirection * -1.0), 0.5, 1.0), 1.0);
+            lighting += vec3(0.9);
+            lighting *= fresnel * reflectivity;
+            //checkPoint = currentOrigin + rayDirection * (dist - 0.5);
+            rayDirection = reflect(rayDirection, surfaceNormal);
+            // epsilon must be small for corners, or you'll get reflected far into another block
+            currentOrigin = p + rayDirection * 0.01;
+
+            if (hasObjectAt(currentOrigin))
+            {
+                // stuck in an object, not good...
+                break;
+            }
+        }
+        else
+        {
+            break;
+        }
+
+        ObjectAndDistance objAndDistance = raymarch(currentOrigin, rayDirection, 9999.0);
+
+        if (objAndDistance.distance < 9999.0)
+        {
+            mat3 material = computeMaterial(currentOrigin, rayDirection, objAndDistance.object, objAndDistance.distance);
+            color = material[0];
+            vec3 bumpNormal = material[1];
+            float roughness = material[2].x;
+            reflectivity = 1.0 - roughness;
+
+            vec3 surfaceNormal = computeNormalVector(currentOrigin, rayDirection, objAndDistance.object, objAndDistance.distance, bumpNormal);
+            lighting *= computeLighting(currentOrigin, rayDirection, objAndDistance.object, objAndDistance.distance, surfaceNormal);
+        }
+        else
+        {
+            // hit the sky box
+            color *= skyBox(currentOrigin, rayDirection).rgb;
+            break;
+        }
+    }
+
+    return mat3(color, lighting, vec3(1.0));
+}
+
 /* Returns the color at the given screen pixel plus the ID of the object that was
  * hit in the a component. The object ID is added to the amount of traces multiplied
  * by 1000.
@@ -1623,10 +1731,6 @@ vec4 shootRayThroughScreen(vec2 uv, vec3 origin, float aspect)
             vec3 bumpNormalT = (surfaceTrafo * vec4(bumpNormalM, 1.0)).xyz;
             vec3 bumpNormal = transformNormalOW(bumpNormalT, obj);
            
-            // for debugging: show normals
-            materialColor = showNormals ? vec3(0.5) + bumpNormal * 0.5
-                                        : materialColor;
-
             if (volumetric < 0.1 && ior < 0.001)
             {
                 vec3 lightIntensity = phongShading(currentOrigin, checkPoint, bumpNormal, roughness);
@@ -1838,22 +1942,84 @@ void main()
 
     float aspect = screenWidth / screenHeight;
     vec2 pixelSize = vec2(1.0) / vec2(screenWidth, screenHeight);
-
     float exposure = 1.0;
 
-    vec3 origin = vec3(0, 0, -0.1);
+    vec3 cameraPosition = vec3(0, 0, -0.1);
 
-    vec4 samplePoint = shootRayThroughScreen(uv, origin, aspect);
-    vec3 pixel = samplePoint.rgb;
-    pixel *= exposure;
-    pixel = gammaCorrection(pixel);
+    // transform the camera location and orientation
+    vec3 origin = (cameraTrafo * vec4(cameraPosition, 1.0)).xyz;
+    vec3 screenPoint = (cameraTrafo * vec4(uv.x, uv.y / aspect, 1.0, 1.0)).xyz;
+    // shoot a ray from the camera onto the near plane (screen)
+    vec3 rayDirection = normalize(screenPoint - origin);
+
+    ObjectAndDistance objAndDistance = raymarch(origin, rayDirection, 9999.0);
+    if (renderChannel == DEPTH_BUFFER_CHANNEL)
+    {
+        fragColor = vec4(vec3(min(objAndDistance.distance, 150.0) / 150.0), 1.0);
+        return;
+    }
+
+    if (objAndDistance.distance > 9990.0)
+    {
+        // hit the sky box
+        fragColor = vec4(gammaCorrection(skyBox(origin, rayDirection).rgb * exposure), 1.0);
+        return;
+    }
+
+    mat3 material = computeMaterial(origin, rayDirection, objAndDistance.object, objAndDistance.distance);
+    vec3 color = material[0];
+    float roughness = material[2].x;
+    float reflectivity = 1.0 - roughness;
+
+    if (renderChannel == COLORS_CHANNEL)
+    {
+        fragColor = vec4(color, 1.0);
+        return;
+    }
+
+    if (tasmProgramTooLong)
+    {
+        fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+        return;
+    }
+    else if (tasmStackOutOfBounds)
+    {
+        fragColor = vec4(1.0, 1.0, 0.0, 1.0);
+        return;
+    }
+
+    vec3 surfaceNormal = computeNormalVector(origin, rayDirection, objAndDistance.object, objAndDistance.distance, material[1]);
+    if (renderChannel == NORMALS_CHANNEL)
+    {
+        fragColor = vec4(vec3(0.5) + surfaceNormal * 0.5, 1.0);
+        return;
+    }
+
+    vec3 lighting = computeLighting(origin, rayDirection, objAndDistance.object, objAndDistance.distance, surfaceNormal);
+    if (renderChannel == LIGHTING_CHANNEL)
+    {
+        fragColor = vec4(lighting, 1.0);
+        return;
+    }
+
+    if (reflectivity > 0.1)
+    {
+        mat3 rayTraced = traceRay(origin, rayDirection, objAndDistance.distance, surfaceNormal, reflectivity);
+        color *= rayTraced[0];
+        lighting *= rayTraced[1];
+    }
 
     outlinesMap = freeEdge || aoEdge;
-
-    if (enableOutlines && outlinesMap)
-    {   
-        pixel = vec3(0.0, 0.0, 0.0);
+    if (renderChannel == OUTLINES_CHANNEL)
+    {
+        fragColor = vec4(vec3(outlinesMap ? 0.0 : 1.0), 1.0);
+        return;
     }
+
+    vec3 composed = enableOutlines && outlinesMap ? vec3(0.0)
+                                                  : gammaCorrection(lighting * color * exposure);
+    fragColor = vec4(composed, 1.0);
+
 
     if (tasmProgramTooLong)
     {
@@ -1863,23 +2029,28 @@ void main()
     {
         fragColor = vec4(1.0, 1.0, 0.0, 1.0);
     }
-    else if (debug == 1)
-    {
-        fragColor = vec4(debugColor, 1.0);
-    }
-    else if (debug == 2)
-    {
-        fragColor = vec4(1.0, 0.0, 1.0, 1.0);
-    }
-    else if (debug == 3)
-    {
-        fragColor = vec4(1.0, 1.0, 0.0, 1.0);
-    }
     else
     {
-        fragColor = vec4(pixel, 1.0);
-        //fragColor = vec4(vec3(float(min(cubeDistanceMap, 100)) / 100.0), 1.0);
-        //fragColor = vec4(vec3(min(depthMap, 100.0) / 100.0), 1.0);
-        //fragColor = vec4(vec3(outlinesMap ? 0.0 : 1.0), 1.0);
+        switch (renderChannel)
+        {
+        case IMAGE_CHANNEL:
+            //fragColor = vec4(pixel, 1.0);
+            break;
+        case NORMALS_CHANNEL:
+            fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+            break;
+        case LIGHTING_CHANNEL:
+            fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+            break;
+        case COLORS_CHANNEL:
+            fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+            break;
+        case OUTLINES_CHANNEL:
+            fragColor = vec4(vec3(outlinesMap ? 0.0 : 1.0), 1.0);
+            break;
+        default:
+            fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+            break;
+        }
     }
 }

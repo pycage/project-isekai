@@ -571,9 +571,11 @@ class World extends core.Object
         //console.log("AFTER: " + JSON.stringify(freedAddressesPerLod));
         //console.log(JSON.stringify(priv.sectorMap.map((m, idx) => [idx, m])));
         
+        this.uploadData(canvas, false);
+
         // write sector map
-        this.writeSectorMap();
-        canvas.updateSampler("worldData", 0, 4095, 4096, 1, priv.worldData.subarray(4095 * 4096 * 4));
+        //this.writeSectorMap();
+        //canvas.updateSampler("worldData", 0, 4095, 4096, 1, priv.worldData.subarray(4095 * 4096 * 4));
     }
 
     uploadData(canvas, flush)
