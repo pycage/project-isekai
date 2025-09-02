@@ -1,6 +1,6 @@
 #version 300 es
-precision mediump float;
-precision highp int;    /* Android needs this for 32 bit precision */
+precision highp float;  /* Android needs this for sufficient precision */
+precision highp int;    /* Android needs this for sufficient precision */
 precision highp usampler2D;
 
 // world configuration
@@ -8,7 +8,7 @@ const int horizonSize = 5;
 const int sectorSize = 16;
 const int cubeSize = 4;
 const int worldPageSize = 4096;
-const int sectorLines = 32;
+const int sectorLines = 17;
 
 in vec2 uv;
 out vec4 fragColor;
@@ -158,7 +158,7 @@ int lodOfSector(int sector)
     int center = horizonSize / 2;
     int dist = max(max(abs(v.x - center), abs(v.y - center)), abs(v.z - center));
 
-    return dist < 2 ? 0 : 1;
+    return dist < 3 ? 0 : 1;
 }
 
 int getCubeLod(int lod)
@@ -1072,6 +1072,12 @@ bool hasObjectAt(vec3 p)
 ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint, vec3 rayDirection)
 {
     WorldLocator noObject;
+
+    if (mapSector(cube.sector) >= 100000)
+    {
+        // this sector is empty
+        return ObjectAndDistance(noObject, 9999.0);
+    }
 
     uint offset = sectorDataOffset(cube.sector) + cubeDataOffset(cube);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);

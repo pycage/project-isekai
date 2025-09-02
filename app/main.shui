@@ -126,6 +126,11 @@ Document {
 
         property enabled: true
 
+        function getAxis(name)
+        {
+            return axes[localStorage.controllerMapping[name]];
+        }
+
         function hasButton(name)
         {
             return buttons[localStorage.controllerMapping[name]];
@@ -139,15 +144,17 @@ Document {
             }
 
             //console.log("Axes: " + JSON.stringify(axes));
-            if (axes[0] < -0.5)
+            const horiz = getAxis("left");
+            const vert = getAxis("up");
+            if (horiz < -0.5)
             {
                 controls.rotateLeft();
             }
-            else if (axes[0] > 0.5)
+            else if (horiz > 0.5)
             {
                 controls.rotateRight();
             }
-            if (axes[1] < -0.5)
+            if (vert < -0.5)
             {
                 if (hasButton("look"))
                 {
@@ -158,7 +165,7 @@ Document {
                     controls.forward(hasButton("run") ? 3 : 1);
                 }
             }
-            else if (axes[1] > 0.5)
+            else if (vert > 0.5)
             {
                 if (hasButton("look"))
                 {
@@ -423,11 +430,11 @@ Document {
                     const sectorDist = world.sectorDistance(sector);
                     console.log("SECTOR DIST: " + JSON.stringify(sectorDist));
                     universeLocation = mat.add(universeLocation, sectorDist);
-                    world.updateHorizon(universeLocation, canvas);
 
                     // reset camera location (the camera must move in the opposite direction to stay put)
                     cameraLocation = mat.add(cameraLocation, mat.mul(sectorDist, -64));
-                    console.log("all took " + (Date.now() - now) + "ms");
+                    world.updateHorizon(universeLocation, canvas);
+                    console.log("Shifting sectors took " + (Date.now() - now) + "ms");
 
                     // reposition global lights
                     setLight(doc.lights, 0, mat.add(mat.mul(universeLocation, 64), mat.vec(30.0, 500.0, 30.0)), mat.vec(1.0, 1.0, 1.0), 30000.0);
@@ -507,12 +514,16 @@ Document {
                 const response = await doc.httpRequest("shader/raymarching.glsl").send();
                 const shaderData = await response.text();
 
+                // TODO: check for floatp precision and set accordingly to have it work on Android (requires highp)
+
                 console.log("Setting up shader...");
                 fragmentShader = shaderData;
 
                 console.log("Creating world...");
                 setSampler("worldData", 4096, 4096, world.worldData, { data: true });
+
                 world.updateHorizon(universeLocation, canvas);
+                world.uploadData(canvas, true);
 
                 console.log("Creating textures...");
                 const tasm = await makeTasm();
@@ -953,7 +964,8 @@ Document {
             canvas.setUniform("int", "enableOutlines", outlinesCheckBox.checked);
             canvas.setUniform("mat4", "cameraTrafo", cameraTrafo);
             canvas.setUniform("vec3", "universeLocation", mat.sub(canvas.universeLocation, mat.vec(128, 128, 128)));
-            world.uploadData(canvas);
+            
+            world.uploadData(canvas, false);
 
             if (measuringPending)
             {

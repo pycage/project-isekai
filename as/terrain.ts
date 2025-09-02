@@ -2,7 +2,7 @@ import { mandelbrot } from  "./mandelbrot.ts";
 
 const CUBE_SIZE: i32 = 4;
 const SECTOR_SIZE: i32 = 16;
-const SECTOR_LINES: i32 = 32;
+const SECTOR_LINES: i32 = 17;
 
 /*
 function cellularNoise2D(px, py, size)

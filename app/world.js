@@ -9,7 +9,7 @@ const HORIZON_SIZE = 5;
 const SECTOR_SIZE = 16;
 // the side-length of a cube in voxels
 const CUBE_SIZE = 4;
-const SECTOR_LINES = 32;
+const SECTOR_LINES = 17;
 const VOXEL_DATA_OFFSET = SECTOR_SIZE * SECTOR_SIZE * SECTOR_SIZE;
 const CUBE_VOXEL_STRIDE = CUBE_SIZE * CUBE_SIZE * CUBE_SIZE;
 
@@ -105,7 +105,7 @@ function lodOfSector(sector)
     const center = Math.floor(HORIZON_SIZE / 2);
     const dist = Math.max(Math.abs(x - center), Math.abs(y - center), Math.abs(z - center));
 
-    return dist < 2 ? 0 : 1;
+    return dist < 3 ? 0 : 1;
 }
 
 function sectorWorldLocation(sector, cubeSize)
@@ -479,26 +479,13 @@ class World extends core.Object
 
     }
 
-    /* Clears the given sector.
-     */
-    clearSector(sector)
-    {
-        const sectorLine = SECTOR_LINES * this.mapSector(sector);
-        const sectorStart = sectorLine * 4096 * 4;
-        const sectorLength = SECTOR_LINES * 4096 * 4;
-
-        d.get(this).worldData.fill(0, sectorStart, sectorStart + sectorLength);
-    }
-
     generateSector(sector, universeLocation, lod)
     {
         //console.log("Generating sector " + sector + " around " + JSON.stringify(universeLocation) + " with LOD " + lod);
-        const now = Date.now();
         const ptr = terrain.generateSector(universeLocation[0][0], universeLocation[1][0], universeLocation[2][0], lod);
         const sectorData = readUint32Array(ptr, terrain.memory);
         const sectorLine = SECTOR_LINES * this.mapSector(sector);
         d.get(this).worldData.set(sectorData, sectorLine * 4096 * 4);
-        //console.log("took " + (Date.now() - now) + "ms");
         return { x: 0, y: sectorLine, width: 4096, height: SECTOR_LINES, data: sectorData };
     }
 
@@ -507,6 +494,9 @@ class World extends core.Object
     updateHorizon(universeLocation, canvas)
     {
         const priv = d.get(this);
+
+        // flush pending uploads first
+        this.uploadData(canvas, true);
 
         // make a deep copy
         const sectorMap = priv.sectorMap.map(entry =>
@@ -553,6 +543,7 @@ class World extends core.Object
         //console.log(freedAddressesPerLod[0].length);
         //console.log(JSON.stringify(priv.sectorMap));
 
+        // either move or create the sectors
         let dataRanges = [];
         for (let i = 0; i < requiredSectors.length; ++i)
         {
@@ -564,11 +555,9 @@ class World extends core.Object
                 // this is a new entry
                 //console.log("New Entry, sector: " + entry.sector + ", uloc: " + entry.loc);
                 priv.sectorMap[entry.sector].uloc = entry.loc;
-                priv.sectorMap[entry.sector].address = freedAddressesPerLod[entry.lod].shift();
+                priv.sectorMap[entry.sector].address = freedAddressesPerLod[entry.lod].shift() + 100000 /* mark as empty until uploaded */;
                 //console.log("use free address: " + sectorMap[entry.sector].address);
-                const sectorData = this.generateSector(entry.sector, entry.loc, entry.lod);
-                dataRanges.push([sectorData.y, sectorData.y + sectorData.height]);
-                //canvas.updateSampler("worldData", sectorData.x, sectorData.y, sectorData.width, sectorData.height, sectorData.data);
+                priv.updateQueue.push(entry);
             }
             else
             {
@@ -578,23 +567,7 @@ class World extends core.Object
                 priv.sectorMap[entry.sector].address = sectorMap[idx].address;
             }
         }
-        
-        console.log(dataRanges.length + " Ranges: " + JSON.stringify(dataRanges));
-        const unitedRanges = uniteRanges(dataRanges);
-        unitedRanges.sort((r1, r2) => r1[0] - r2[0]);
-        console.log(unitedRanges.length + " United: " + JSON.stringify(unitedRanges));
-        //const now = Date.now();
-        unitedRanges.forEach(range =>
-        {
-            priv.updateQueue.push(range);
-            //const [begin, end] = range;
-            //const data = priv.worldData.subarray(begin * 4096 * 4, end * 4096 * 4);
-            //canvas.updateSampler("worldData", 0, begin, 4096, end - begin, data);
-
-        });
-        //console.log("Uploaded in " + (Date.now() - now) + "ms");
-
-        
+               
         //console.log("AFTER: " + JSON.stringify(freedAddressesPerLod));
         //console.log(JSON.stringify(priv.sectorMap.map((m, idx) => [idx, m])));
         
@@ -603,18 +576,41 @@ class World extends core.Object
         canvas.updateSampler("worldData", 0, 4095, 4096, 1, priv.worldData.subarray(4095 * 4096 * 4));
     }
 
-    uploadData(canvas)
+    uploadData(canvas, flush)
     {
         const priv = d.get(this);
-        if (priv.updateQueue.length > 0)
+
+        if (priv.updateQueue.length === 0)
         {
-            const now = Date.now();
-            const range = priv.updateQueue.shift();
+            return;
+        }
+
+        const now = Date.now();
+        let duration = 0;
+        let count = 0;
+        while (priv.updateQueue.length > 0)
+        {
+            const entry = priv.updateQueue.shift();
+            priv.sectorMap[entry.sector].address -= 100000;
+            const sectorData = this.generateSector(entry.sector, entry.loc, entry.lod);
+            const range = [sectorData.y, sectorData.y + sectorData.height];
+
             const [begin, end] = range;
             const data = priv.worldData.subarray(begin * 4096 * 4, end * 4096 * 4);
             canvas.updateSampler("worldData", 0, begin, 4096, end - begin, data);
-            console.log("Uploaded in " + (Date.now() - now) + "ms");
+
+            duration += Date.now() - now;
+            ++count;
+
+            if (! flush && duration > 10)
+            {
+                break;
+            }
         }
+
+        this.writeSectorMap();
+        canvas.updateSampler("worldData", 0, 4095, 4096, 1, priv.worldData.subarray(4095 * 4096 * 4));
+        console.log("Uploaded " + count + " sectors in " + (Date.now() - now) + "ms");
     }
 
     writeSectorMap()
