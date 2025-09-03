@@ -61,11 +61,17 @@ struct ObjectAndDistance
 {
     WorldLocator object;
     float distance;
+    vec3 p;
+    vec3 pT;
 };
 
-float depthMap = 0.0;
-int cubeDistanceMap = 0;
-bool outlinesMap = false;
+struct Material
+{
+    vec3 color;
+    vec3 normal;
+    float roughness;
+    float ior;
+};
 
 bool freeEdge = false;
 bool aoEdge = false;
@@ -373,25 +379,12 @@ mat2 rotate2d(float angle)
  */
 mat4 createSurfaceTrafo(vec3 normal)
 {
-    vec3 p = vec3(1.0, 0.0, 0.0);
+    vec3 up = abs(normal.y) < 0.999 ? vec3(0.0, 1.0, 0.0)
+                                    : vec3(1.0, 0.0, 0.0);
 
-    vec3 tangent = p;
+    vec3 tangent = normalize(cross(up, normal));
+    vec3 bitangent = cross(normal, tangent);
 
-    // rotate normal around y counter-clockwise for second point
-    if (abs(dot(normal, vec3(0.0, 1.0, 0.0))) < 1.0)
-    {
-        p = vec3(
-            normal.x * cos(0.1) - normal.z * sin(0.1),
-            0.0,
-            normal.x * sin(0.1) - normal.z * cos(0.1)
-        );
-
-        float dp = dot(normal, p);
-        tangent = normalize(p - normal * dp);
-    }
-
-    vec3 bitangent = normalize(cross(normal, tangent));
-   
     return mat4(
         vec4(tangent, 0.0),
         vec4(bitangent, 0.0),
@@ -736,7 +729,7 @@ float sdfBox(vec3 p)
 
 /* Processes a set of TASM instructions to generate a texture.
  */
-mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
+Material processTasm(int program, vec2 st, vec3 p, float travelDist)
 {
     // Since the GPU is quite limited on what it can do, implementing the
     // TASM instruction set might be too heavy for it. Therefore, all TASM
@@ -957,10 +950,11 @@ mat3 processTasm(int program, vec2 st, vec3 p, float travelDist)
             tasmRegisters[destPointer + 2 + destOffset] = tasmRegisters[srcPointer + 2 + srcOffset];
     }
 
-    return mat3(
+    return Material(
         vec3(tasmRegisters[REG_COLOR_R], tasmRegisters[REG_COLOR_G], tasmRegisters[REG_COLOR_B]),
         vec3(tasmRegisters[REG_NORMAL_X], tasmRegisters[REG_NORMAL_Y], tasmRegisters[REG_NORMAL_Z]),
-        vec3(tasmRegisters[REG_ATTRIB_1], tasmRegisters[REG_ATTRIB_2], tasmRegisters[REG_ATTRIB_3])
+        tasmRegisters[REG_ATTRIB_1],
+        tasmRegisters[REG_ATTRIB_2]
     );
 }
 
@@ -1022,7 +1016,7 @@ vec3 getSurfaceNormal(vec3 p)
  * - vec3: normal vector (z pointing upwards)
  * - vec3: roughness, ior, volumetric
  */
-mat3 getObjectMaterial(WorldLocator obj, vec3 p, vec3 worldP, float travelDist)
+Material getObjectMaterial(WorldLocator obj, vec3 p, vec3 worldP, float travelDist)
 {
     int materialId = int(voxelType(obj));
     vec2 st = p.xy;
@@ -1037,12 +1031,19 @@ mat3 getObjectMaterial(WorldLocator obj, vec3 p, vec3 worldP, float travelDist)
     float y = dot(p, axis2);
     st = 0.5 + vec2(x, y);
 
-    return enableTasm ? processTasm(materialId, st, worldP, travelDist)
-                      : mat3(
-                            vec3(1.0),
-                            vec3(0.0, 0.0, 1.0),
-                            vec3(1.0, 0.0, 0.0)
-                        );
+    if (enableTasm)
+    {
+        return processTasm(materialId, st, worldP, travelDist);
+    }
+    else
+    {
+        return Material(
+            vec3(1.0),
+            vec3(0.0, 0.0, 1.0),
+            1.0,
+            0.0
+        );
+    }
 }
 
 bool cubeHasObject(ObjectLocator objLoc, uvec2 pattern, int lod)
@@ -1083,7 +1084,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     if (mapSector(cube.sector) >= 100000)
     {
         // this sector is empty
-        return ObjectAndDistance(noObject, 9999.0);
+        return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
 
     uint offset = sectorDataOffset(cube.sector) + cubeDataOffset(cube);
@@ -1091,7 +1092,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     if (patternAndAddress.r + patternAndAddress.g == 0u)
     {
         // this cube is empty
-        return ObjectAndDistance(noObject, 9999.0);
+        return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
 
     mat4 m = cubeTrafoInverse(cube);
@@ -1104,7 +1105,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         // entry point is out of bounds
         debug = 1;
         debugColor = vec3(1.0, 1.0, 0.0);
-        return ObjectAndDistance(noObject, 9999.0);
+        return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
 
     const float gridSize = 1.0;
@@ -1113,7 +1114,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     if (cubeHasObject(objLoc, patternAndAddress.rg, lodOfSector(cube.sector)))
     {
         WorldLocator obj = makeWorldLocator(cube, objLoc);
-        return ObjectAndDistance(obj, distance(origin, p));
+        return ObjectAndDistance(obj, distance(origin, p), p, transformPoint(p, obj));
     }
 
     vec3 invRayDirection = 1.0 / abs(rayDirection);
@@ -1192,17 +1193,17 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         if (cubeHasObject(objLoc, patternAndAddress.rg, lodOfSector(cube.sector)))
         {
             WorldLocator obj = makeWorldLocator(cube, objLoc);
-            return ObjectAndDistance(obj, distance(origin, p));
+            return ObjectAndDistance(obj, distance(origin, p), p, transformPoint(p, obj));
         }
     }
 
-    return ObjectAndDistance(noObject, 9999.0);
+    return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
 }
 
 ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float maxDistance)
 {
     WorldLocator noObject;
-    ObjectAndDistance result = ObjectAndDistance(noObject, 9999.0);
+    ObjectAndDistance result;
 
     float maxDistanceSquared = maxDistance * maxDistance;
     const float gridSize = 4.0;
@@ -1308,7 +1309,6 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
         }
     }
 
-    cubeDistanceMap = max(cubeDistanceMap, i);
     return result;
 }
 
@@ -1322,7 +1322,7 @@ vec4 skyBox(vec3 origin, vec3 rayDirection)
     vec3 hitPoint = abs(rayDirection.y) > 0.001 ? origin + rayDirection * ((1000.0 - origin.y) / rayDirection.y)
                                                 : origin + rayDirection;
 
-    vec3 color = enableTasm && rayDirection.y > 0.0 ? processTasm(0, hitPoint.xz, hitPoint, distance(origin, hitPoint))[0]
+    vec3 color = enableTasm && rayDirection.y > 0.0 ? processTasm(0, hitPoint.xz, hitPoint, distance(origin, hitPoint)).color
                                                     : vec3(0.0);
 
     return vec4(color, 1.0);
@@ -1361,13 +1361,13 @@ vec3 simplePhongShading(vec3 checkPoint)
     return lighting.rgb;
 }
 
-vec3 phongShading(vec3 origin, vec3 checkPoint, vec3 surfaceNormal, float roughness)
+vec3 phongShading(vec3 origin, vec3 checkPoint, vec3 ambience, vec3 surfaceNormal, float roughness)
 {
     // Phong shading: lighting = ambient + diffuse + specular
     //                color = modelColor * lighting
 
     vec3 viewDirection = normalize(origin - checkPoint);
-    vec3 lighting = vec3(0.2);
+    vec3 lighting = ambience;
     float shininess = (1.0 - roughness) * 64.0;
 
     for (int i = 0; i < 3; ++i)
@@ -1432,6 +1432,7 @@ vec3 phongShading(vec3 origin, vec3 checkPoint, vec3 surfaceNormal, float roughn
 
 float ambientOcclusion(vec3 checkPoint, vec3 rayDirection, WorldLocator obj, mat4 surfaceTrafo, float size)
 {
+    // TODO: still have to do something about the corners
     vec3 checkPoint2 = checkPoint - rayDirection * 0.01;
     vec3 checkPointT2 = transformPoint(checkPoint2, obj);
     vec3 surfacePoint = clamp((inverse(surfaceTrafo) * vec4(checkPointT2, 1.0)).xyz, -0.5, 0.5);
@@ -1463,6 +1464,59 @@ float ambientOcclusion(vec3 checkPoint, vec3 rayDirection, WorldLocator obj, mat
     aoEdge = hasAo;
 
     return clamp(shadow, 0.0, 1.0);
+}
+
+float ambientOcclusion2(vec3 checkPoint, vec3 rayDirection, WorldLocator obj, mat4 surfaceTrafo, float size)
+{
+    // AO implementation by ChatGPT - not perfect, but maybe better than mine
+
+    // Slight offset to avoid self-intersection
+    vec3 offsetPoint = checkPoint - rayDirection * 0.01;
+    vec3 localPoint = transformPoint(offsetPoint, obj);
+    
+    // Inverse transform to surface local space [-0.5, 0.5]
+    vec3 surfacePoint = clamp((inverse(surfaceTrafo) * vec4(localPoint, 1.0)).xyz, -0.5, 0.5);
+    
+    mat4 aoTrafo = getObjectTrafo(obj);
+
+    // Sample directions in local tangent plane (XY plane of surface)
+    // 6 directions evenly spaced at 60 degrees, radius = size
+    const int sampleCount = 6;
+    const vec2 sampleDirs[6] = vec2[](
+        vec2(1.0, 0.0),
+        vec2(0.5, 0.866),  // cos(60), sin(60)
+        vec2(-0.5, 0.866),
+        vec2(-1.0, 0.0),
+        vec2(-0.5, -0.866),
+        vec2(0.5, -0.866)
+    );
+
+    float occlusionSum = 0.0;
+
+    for (int i = 0; i < sampleCount; i++)
+    {
+        // Compute offset vector in surface space, scaled by size
+        vec2 offset2D = sampleDirs[i] * size;
+
+        // Convert offset2D back to world space using surfaceTrafo
+        vec3 offsetVec = (surfaceTrafo * vec4(offset2D.x, offset2D.y, 0.0, 0.0)).xyz;
+
+        // Sample point in object space for AO check
+        vec3 samplePos = (aoTrafo * vec4(localPoint + offsetVec, 1.0)).xyz;
+
+        // Accumulate occlusion if object present
+        occlusionSum += hasObjectAt(samplePos) ? 1.0 : 0.0;
+    }
+
+    // Normalize occlusion (0.0 to 1.0)
+    float ao = 1.0 - (occlusionSum / float(sampleCount));
+
+    // Optionally smooth AO to avoid hard edges
+    ao = smoothstep(0.5, 1.0, ao);
+
+    aoEdge = (ao < 0.8); // flag edge AO if AO is strong enough
+
+    return clamp(ao, 0.0, 1.0);
 }
 
 /* Determining the box normals is tricky around the edges and corners.
@@ -1569,45 +1623,38 @@ ObjectAndDistance castRay(vec3 origin, vec3 rayDirection)
     return raymarch(origin, rayDirection, 9999.0);
 }
 
-mat3 computeMaterial(vec3 origin, vec3 rayDirection, WorldLocator obj, float distance)
+Material computeMaterial(ObjectAndDistance obj)
 {
-    vec3 p = origin + rayDirection * distance;
-    vec3 pT = transformPoint(p, obj);
-
-    return getObjectMaterial(obj, pT, p, distance);
+    return getObjectMaterial(obj.object, obj.pT, obj.p, obj.distance);
 }
 
-vec3 computeNormalVector(vec3 origin, vec3 rayDirection, WorldLocator obj, float distance, vec3 bumpNormal)
+vec3 computeNormalVector(vec3 origin, vec3 rayDirection, ObjectAndDistance obj, vec3 bumpNormal)
 {
-    vec3 p = origin + rayDirection * distance;
-    vec3 pT = transformPoint(p, obj);
-
-    vec3 surfaceNormal = getCorrectedBoxNormals(obj, pT, rayDirection);
+    vec3 surfaceNormal = getCorrectedBoxNormals(obj.object, obj.pT, rayDirection);
 
     mat4 surfaceTrafo = createSurfaceTrafo(surfaceNormal);
     vec3 bumpNormalT = (surfaceTrafo * vec4(bumpNormal, 1.0)).xyz;
 
-    return transformNormalOW(bumpNormalT, obj);
+    return transformNormalOW(bumpNormalT, obj.object);
 }
 
-vec3 computeLighting(vec3 origin, vec3 rayDirection, WorldLocator obj, float distance, vec3 surfaceNormal)
+vec3 computeLighting(vec3 origin, vec3 rayDirection, ObjectAndDistance obj, vec3 surfaceNormal)
 {
-    vec3 p = origin + rayDirection * distance;
-    vec3 lighting = phongShading(origin, p, surfaceNormal, 1.0);
+    vec3 ambience = vec3(0.2) * (enableAmbientOcclusion ? 0.3 + ambientOcclusion2(obj.p, rayDirection, obj.object, createSurfaceTrafo(surfaceNormal), 0.1) * 0.5
+                                                        : 1.0);
 
-    mat4 surfaceTrafo = createSurfaceTrafo(surfaceNormal);
+    vec3 light = phongShading(origin, obj.p, ambience, surfaceNormal, 1.0);
 
-    lighting *= enableAmbientOcclusion ? 1.0 - ambientOcclusion(p, rayDirection, obj, surfaceTrafo, 0.1) * 0.5
-                                       : 1.0;
-
-    return lighting;
+    return light;
 }
 
-mat3 traceRay(vec3 origin, vec3 rayDirection, float distance, vec3 surfaceNormal, float reflectivity)
+mat3 computeRayTracing(vec3 origin, vec3 rayDirection, float distance, vec3 surfaceNormal, Material material)
 {
     vec3 currentOrigin = origin + rayDirection * distance;
     vec3 color = vec3(1.0);
     vec3 lighting = vec3(1.0);
+
+    bool insideObject = false;
 
     for (int traceCount = 0; traceCount < 8; ++traceCount)
     {
@@ -1619,14 +1666,14 @@ mat3 traceRay(vec3 origin, vec3 rayDirection, float distance, vec3 surfaceNormal
 
         vec3 p = currentOrigin;
 
-        if (reflectivity > 0.1)
+        if (material.roughness < 1.0)
         {
             // we're not finished yet - reflect the ray
             float fresnel = pow(clamp(1.0 - dot(surfaceNormal, rayDirection * -1.0), 0.5, 1.0), 1.0);
             lighting += vec3(0.9);
-            lighting *= fresnel * reflectivity;
-            //checkPoint = currentOrigin + rayDirection * (dist - 0.5);
+            lighting *= fresnel * (1.0 - material.roughness);
             rayDirection = reflect(rayDirection, surfaceNormal);
+
             // epsilon must be small for corners, or you'll get reflected far into another block
             currentOrigin = p + rayDirection * 0.01;
 
@@ -1635,6 +1682,22 @@ mat3 traceRay(vec3 origin, vec3 rayDirection, float distance, vec3 surfaceNormal
                 // stuck in an object, not good...
                 break;
             }
+        }
+        else if (material.ior > 0.1)
+        {
+            // we're not finished yet - refract the ray and enter or exit the object
+            vec3 refractedRay = refr(rayDirection, surfaceNormal, material.ior);
+            if (length(refractedRay) < 0.0001)
+            {
+                // total internal reflection
+                rayDirection = normalize(reflect(rayDirection, surfaceNormal));
+            }
+            else
+            {
+                insideObject = ! insideObject;
+                rayDirection = normalize(refractedRay);
+            }
+            currentOrigin = p + rayDirection * 0.01;
         }
         else
         {
@@ -1645,14 +1708,11 @@ mat3 traceRay(vec3 origin, vec3 rayDirection, float distance, vec3 surfaceNormal
 
         if (objAndDistance.distance < 9999.0)
         {
-            mat3 material = computeMaterial(currentOrigin, rayDirection, objAndDistance.object, objAndDistance.distance);
-            color = material[0];
-            vec3 bumpNormal = material[1];
-            float roughness = material[2].x;
-            reflectivity = 1.0 - roughness;
+            material = computeMaterial(objAndDistance);
+            color = material.color;
 
-            vec3 surfaceNormal = computeNormalVector(currentOrigin, rayDirection, objAndDistance.object, objAndDistance.distance, bumpNormal);
-            lighting *= computeLighting(currentOrigin, rayDirection, objAndDistance.object, objAndDistance.distance, surfaceNormal);
+            vec3 surfaceNormal = computeNormalVector(currentOrigin, rayDirection, objAndDistance, material.normal);
+            lighting *= computeLighting(currentOrigin, rayDirection, objAndDistance, surfaceNormal);
         }
         else
         {
@@ -1663,256 +1723,6 @@ mat3 traceRay(vec3 origin, vec3 rayDirection, float distance, vec3 surfaceNormal
     }
 
     return mat3(color, lighting, vec3(1.0));
-}
-
-/* Returns the color at the given screen pixel plus the ID of the object that was
- * hit in the a component. The object ID is added to the amount of traces multiplied
- * by 1000.
- */
-vec4 shootRayThroughScreen(vec2 uv, vec3 origin, float aspect)
-{
-    // transform the camera location and orientation
-    vec3 currentOrigin = (cameraTrafo * vec4(origin, 1.0)).xyz;
-    vec3 screenPoint = (cameraTrafo * vec4(uv.x, uv.y / aspect, 1.0, 1.0)).xyz;
-
-    WorldLocator currentObject;
-
-    // shoot a ray from origin onto the near Plain (screen)
-    vec3 rayDirection = normalize(screenPoint - currentOrigin);
-
-    float travelDistance = 0.0;
-
-    vec3 color = vec3(1.0);
-    vec3 light = vec3(0.0);
-    vec3 volumetricColor = vec3(0.8);
-    vec3 volumetricLight = vec3(0.0);
-    float volumetricDensity = 0.0;
-
-    bool insideObject = false;
-
-    int traceCount = 0;
-    for (; traceCount < 8; ++traceCount)
-    {
-        if (traceCount == tracingDepth)
-        {
-            // tracing depth exceeded
-            //debug = 2;
-            break;
-        }
-
-        ObjectAndDistance objectAndDist = raymarch(currentOrigin, rayDirection, 9999.0); // traceCount == 0 ? 9999.0 : 100.0);
-        WorldLocator obj = objectAndDist.object;
-        float dist = objectAndDist.distance;
-        
-        travelDistance += dist;
-        currentObject = obj;
-
-        depthMap = depthMap > 0.0 ? depthMap : dist;
-
-        if (dist < 9999.0)
-        {
-            // hit something
-            vec3 checkPoint = currentOrigin + rayDirection * dist;
-            vec3 checkPointT = transformPoint(checkPoint, obj);
-
-            mat3 materialData = getObjectMaterial(obj, checkPointT, checkPoint, travelDistance);
-            //mat3 materialData = mat3(vec3(1.0), vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0));
-            vec3 materialColor = materialData[0];
-            float roughness = materialData[2].x;
-            float reflectivity = 1.0 - roughness;
-            float ior = materialData[2].y;
-            float volumetric = materialData[2].z;
-
-            vec3 surfaceNormal = getCorrectedBoxNormals(obj, checkPointT, rayDirection);
-
-            //vec3 surfaceNormal = transformNormalOW(surfaceNormalT, obj);
-            mat4 surfaceTrafo = createSurfaceTrafo(surfaceNormal);
-            vec3 bumpNormalM = materialData[1];
-            vec3 bumpNormalT = (surfaceTrafo * vec4(bumpNormalM, 1.0)).xyz;
-            vec3 bumpNormal = transformNormalOW(bumpNormalT, obj);
-           
-            if (volumetric < 0.1 && ior < 0.001)
-            {
-                vec3 lightIntensity = phongShading(currentOrigin, checkPoint, bumpNormal, roughness);
-                light += lightIntensity;
-                color *= materialColor;
-
-                lightIntensity *= enableAmbientOcclusion ? 1.0 - ambientOcclusion(checkPoint, rayDirection, obj, surfaceTrafo, 0.1) * 0.5
-                                                         : 1.0;
-
-                color *= lightIntensity;
-            }
-            
-            // measure volumetrics
-            for (int i = 0; i < 100; ++i)
-            {
-                if (float(i) * 0.1 > dist)
-                {
-                    break;
-                }
-                vec3 samplePoint = currentOrigin + rayDirection * float(i) * 0.1;
-                float f = float((timems / 100000) % 500);
-                float v = max(0.0, 8.0 - samplePoint.y) * fogDensity * (1.0 - generateCellularNoise3D(samplePoint / 16.0 + f * vec3(0.0, -0.005, 0.0), 20));
-                volumetricDensity += v;
-                if (v > 0.0001)
-                {
-                    //volumetricColor *= 0.9 * simplePhongShading(samplePoint);
-                    //volumetricLight += exp(-v) * simplePhongShading(samplePoint) * vec3(0.01);
-                }
-            }
-
-            if (ior > 0.01)
-            {
-                // we're not finished yet - refract the ray and enter or exit the object
-                vec3 refractedRay = refr(rayDirection, bumpNormal, ior);
-                if (length(refractedRay) < 0.0001)
-                {
-                    // total internal reflection
-                    rayDirection = normalize(reflect(rayDirection, bumpNormal));
-                }
-                else
-                {
-                    insideObject = ! insideObject;
-                    rayDirection = normalize(refractedRay);
-                }
-                currentOrigin = checkPoint + rayDirection * 0.01;
-                //light *= 0.5;
-            }
-            else if (reflectivity > 0.1)
-            {
-                // we're not finished yet - reflect the ray
-                float fresnel = pow(clamp(1.0 - dot(bumpNormal, rayDirection * -1.0), 0.5, 1.0), 1.0);
-                //checkPoint = currentOrigin + rayDirection * (dist - 0.5);
-                rayDirection = reflect(rayDirection, bumpNormal);
-                // epsilon must be small for corners, or you'll get reflected far into another block
-                //currentOrigin = checkPoint; //bumpNormal * 0.1 + /* bump off the surface a bit */
-                currentOrigin = checkPoint + rayDirection * 0.01;
-                if (hasObjectAt(currentOrigin))
-                {
-                    // stuck in an object, not good...
-                    break;
-                }
-                light *= fresnel * reflectivity;
-            }
-            else if (volumetric > 0.1)
-            {
-                // convert origin and ray into object space
-                vec3 rayP = currentOrigin + rayDirection;
-                vec3 rayPT = transformPoint(rayP, obj);
-
-                vec3 originT = transformPoint(currentOrigin, obj);
-                vec3 rayDirectionT = rayPT - originT;
-
-                vec3 checkPointT = transformPoint(checkPoint, obj);
-                light *= distance(checkPointT, vec3(0.0)) / 1.0;
-
-                vec3 entryExit = hitAabb(originT, rayDirectionT);
-                vec3 entryPoint = currentOrigin + rayDirection * entryExit.s;
-                vec3 entryPointT = originT + rayDirectionT * entryExit.s; // + vec3(0.1, 0.1, 0.1);
-                vec3 exitPointT = originT + rayDirectionT * entryExit.t;
-                float len = entryExit.t - entryExit.s;
-
-                float sdfDist = 0.0;
-                for (int i = 0; i < 50; ++i)
-                {
-                    vec3 samplePointT = entryPointT + rayDirectionT * sdfDist;
-                    float s1 = length(samplePointT - vec3(-0.5 / 2.0, 0.0, 0.0)) - 0.5;
-                    float s2 = length(samplePointT - vec3(+0.5 / 2.0, 0.0, 0.0)) - 0.5;
-                    float d = max(s1, s2);
-                    if (d < 0.001)
-                    {
-                        vec3 li = phongShading(currentOrigin, entryPoint + rayDirection * d, surfaceNormal, roughness);
-                        light += li;
-                        color *= vec3(1.0, 0.0, 0.0);
-                        color *= li;
-                        travelDistance += d;
-                        break;
-                    }
-                    else if (d > 2.0)
-                    {
-                        currentOrigin = checkPoint + (len + 0.01) * rayDirection;
-                        travelDistance += len + 0.01;
-                    }
-                    else
-                    {
-                        sdfDist += d;
-                    }
-                }
-
-                /*
-                volumetricColor *= vec3(0.3, 0.9, 0.9);
-                for (float step = 0.0; step < 1.0; step += 0.01)
-                {
-                    vec3 samplePointT = entryPointT + step * length * rayDirectionT;
-                    if (distance(samplePointT, vec3(0.0)) < 0.4)
-                    {
-                        volumetricDensity += 1.0 - procCellularNoise3D(0.5 + samplePointT / 2.0, 15);
-                        break;
-                    }
-                }
-                currentOrigin = checkPoint + (length + 0.01) * rayDirection;
-                travelDistance += length + 0.01;
-                */
-            }
-            else
-            {
-                break;
-            }
-        }
-        else
-        {
-            // hit the sky box
-            vec4 skyColor = skyBox(currentOrigin, rayDirection);
-            color *= skyColor.rgb;
-            light += vec3(0.5);
-
-            // measure volumetrics
-            volumetricDensity = 0.0;
-            for (int i = 0; i < 100; ++i)
-            {
-                vec3 samplePoint = currentOrigin + rayDirection * float(i) * 0.1;
-                float f = float((timems / 100000) % 500);
-                float v = max(0.0, 8.0 - samplePoint.y) * fogDensity * (1.0 - generateCellularNoise3D(samplePoint / 16.0 + f * vec3(0.0, -0.005, 0.0), 20));
-                volumetricDensity += v;
-            }
-            break;
-        }
-
-    }
-
-    // finally apply the light and fog
-    //color *= light;
-
-    // lerp between volumetric color and color according to the density factor
-    if (volumetricDensity > 0.00001)
-    {
-        volumetricDensity = clamp(volumetricDensity, 0.0, 1.0);
-        volumetricColor = clamp(volumetricColor, 0.0, 1.0);
-        color = vec3(
-            lerp(color.r, volumetricColor.r, volumetricDensity),
-            lerp(color.g, volumetricColor.g, volumetricDensity),
-            lerp(color.b, volumetricColor.b, volumetricDensity)
-        );
-    }
-
-    // fog is an ubiquituous volumetric body
-    float fogFactor = exp(-travelDistance * fogDensity);
-    vec3 fogColor = vec3(1.0); // + 0.1 * random2(uv));
-
-    color = vec3(
-        lerp(fogColor.r, color.r, fogFactor),
-        lerp(fogColor.g, color.g, fogFactor),
-        lerp(fogColor.b, color.b, fogFactor)
-    );
-    /*
-    if (fogDensity > 0.00001)
-    {
-        //volumetricDensity += 1.0 - fogFactor;
-        //volumetricColor = volumetricColor * fogColor * (1.0 - fogFactor);
-    }
-    */
-    
-    return vec4(color, float(traceCount)); // * 1000 + currentObject));    
 }
 
 void main()
@@ -1966,10 +1776,9 @@ void main()
         return;
     }
 
-    mat3 material = computeMaterial(origin, rayDirection, objAndDistance.object, objAndDistance.distance);
-    vec3 color = material[0];
-    float roughness = material[2].x;
-    float reflectivity = 1.0 - roughness;
+    Material material = computeMaterial(objAndDistance);
+    vec3 color = material.color;
+    float reflectivity = 1.0 - material.roughness;
 
     if (renderChannel == COLORS_CHANNEL)
     {
@@ -1988,69 +1797,37 @@ void main()
         return;
     }
 
-    vec3 surfaceNormal = computeNormalVector(origin, rayDirection, objAndDistance.object, objAndDistance.distance, material[1]);
+    vec3 surfaceNormal = computeNormalVector(origin, rayDirection, objAndDistance, material.normal);
     if (renderChannel == NORMALS_CHANNEL)
     {
         fragColor = vec4(vec3(0.5) + surfaceNormal * 0.5, 1.0);
         return;
     }
 
-    vec3 lighting = computeLighting(origin, rayDirection, objAndDistance.object, objAndDistance.distance, surfaceNormal);
+    vec3 lighting = computeLighting(origin, rayDirection, objAndDistance, surfaceNormal);
     if (renderChannel == LIGHTING_CHANNEL)
     {
         fragColor = vec4(lighting, 1.0);
         return;
     }
 
-    if (reflectivity > 0.1)
+    if (material.roughness < 0.9 || material.ior > 0.1)
     {
-        mat3 rayTraced = traceRay(origin, rayDirection, objAndDistance.distance, surfaceNormal, reflectivity);
+        mat3 rayTraced = computeRayTracing(origin, rayDirection, objAndDistance.distance, surfaceNormal, material);
         color *= rayTraced[0];
         lighting *= rayTraced[1];
     }
 
-    outlinesMap = freeEdge || aoEdge;
+    bool isOutline = freeEdge || aoEdge;
     if (renderChannel == OUTLINES_CHANNEL)
     {
-        fragColor = vec4(vec3(outlinesMap ? 0.0 : 1.0), 1.0);
+        fragColor = vec4(vec3(isOutline ? 0.0 : 1.0), 1.0);
         return;
     }
 
-    vec3 composed = enableOutlines && outlinesMap ? vec3(0.0)
-                                                  : gammaCorrection(lighting * color * exposure);
+    vec3 composed = enableOutlines && isOutline ? vec3(0.0)
+                                                : gammaCorrection(lighting * color * exposure);
+    
+
     fragColor = vec4(composed, 1.0);
-
-
-    if (tasmProgramTooLong)
-    {
-        fragColor = vec4(1.0, 0.0, 0.0, 1.0);
-    }
-    else if (tasmStackOutOfBounds)
-    {
-        fragColor = vec4(1.0, 1.0, 0.0, 1.0);
-    }
-    else
-    {
-        switch (renderChannel)
-        {
-        case IMAGE_CHANNEL:
-            //fragColor = vec4(pixel, 1.0);
-            break;
-        case NORMALS_CHANNEL:
-            fragColor = vec4(1.0, 0.0, 0.0, 1.0);
-            break;
-        case LIGHTING_CHANNEL:
-            fragColor = vec4(1.0, 0.0, 0.0, 1.0);
-            break;
-        case COLORS_CHANNEL:
-            fragColor = vec4(1.0, 0.0, 0.0, 1.0);
-            break;
-        case OUTLINES_CHANNEL:
-            fragColor = vec4(vec3(outlinesMap ? 0.0 : 1.0), 1.0);
-            break;
-        default:
-            fragColor = vec4(1.0, 0.0, 0.0, 1.0);
-            break;
-        }
-    }
 }

@@ -635,7 +635,7 @@ Document {
             SelectionBox {
                 id: channelSelector
                 fillWidth: true
-                model: ListModel { data: ["Image", "Depth", "Normals", "Lighting", "Colors", "Outlines"] }
+                model: ListModel { data: ["Image", "Depth", "Normals", "Illumination", "Colors", "Outlines"] }
                 selection: 0
             }
         }
