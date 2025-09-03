@@ -139,7 +139,11 @@ const int TASM_GEN_END = 109;
 
 
 
-#define SQUARED_DIST(p1, p2) dot(p1 - p2, p1 - p2)
+float squaredDist(vec3 p1, vec3 p2)
+{
+    vec3 diff = p1 - p2;
+    return dot(diff, diff);
+}
 
 /* Convers a linear address to a pixel location in the data texture.
  */
@@ -1243,9 +1247,13 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
     ) * gridSize;
 
     vec3 distsOnGrid = abs(gridPoint - p);
-    int i = 0;
-    for (; i < depth; ++i)
+    for (int i = 0; i < 128; ++i)
     {
+        if (i == depth)
+        {
+            break;
+        }
+
         vec3 rayLengths = distsOnGrid * scalingsOnGrid + disabler;
         bool advanceX = rayLengths.x <= rayLengths.y && rayLengths.x <= rayLengths.z;
         bool advanceY = rayLengths.y <= rayLengths.x && rayLengths.y <= rayLengths.z;
@@ -1295,7 +1303,7 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
 
         if (p.x < 0.0 || p.y < 0.0 || p.z < 0.0 ||
             p.x >= float(sectorSize * cubeSize * horizonSize) || p.y >= float(sectorSize * cubeSize * horizonSize) || p.z >= float(sectorSize * cubeSize * horizonSize) ||
-            SQUARED_DIST(p, origin) > maxDistanceSquared)
+            squaredDist(p, origin) > maxDistanceSquared)
         {
             // out of view
             break;
@@ -1616,11 +1624,6 @@ vec3 getCorrectedBoxNormals(WorldLocator obj, vec3 p, vec3 rayDirection)
     }
 
     return surfaceNormal;
-}
-
-ObjectAndDistance castRay(vec3 origin, vec3 rayDirection)
-{
-    return raymarch(origin, rayDirection, 9999.0);
 }
 
 Material computeMaterial(ObjectAndDistance obj)
