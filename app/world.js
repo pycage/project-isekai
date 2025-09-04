@@ -167,6 +167,52 @@ function makeWorldLocator(cube, objLoc)
     };
 }
 
+function uploadLinearData(canvas, begin, data)
+{
+    const lineLength = 4096 * 4;
+    const end = begin + data.length - 1;  // inclusive
+    const line1 = Math.floor(begin / lineLength);
+    const col1 = begin % lineLength;
+    const line2 = Math.floor(end / lineLength);
+    const col2 = end % lineLength;
+
+    if (line1 === line2)
+    {
+        const width = col2 - col1 + 1;
+        const height = 1;
+        canvas.updateSampler("worldData", col1 / 4, line1, width / 4, height, data);
+    }
+    else
+    {
+        // first line: col1 -> lineLength
+        let width = lineLength - col1;
+        let height = 1;
+        let subBegin = 0;
+        let subEnd = subBegin + width;
+        //console.log("1: " + subBegin + " -> " + subEnd + ", " + width + " x " + height + ", " + data.subarray(subBegin, subEnd).length);
+        canvas.updateSampler("worldData", col1 / 4, line1, width / 4, height, data.subarray(subBegin, subEnd));
+
+        // last line: 0 -> col2
+        width = col2 + 1;
+        height = 1;
+        subBegin = data.length - width;
+        subEnd = data.length;
+        //console.log("2: " + subBegin + " -> " + subEnd + ", " + width + " x " + height + ", " + data.subarray(subBegin, subEnd).length);
+        canvas.updateSampler("worldData", 0, line2, width / 4, height, data.subarray(subBegin, subEnd));
+
+        if (line1 + 1 < line2 - 1)
+        {
+            // inbetween
+            width = lineLength;
+            height = line2 - line1 - 1;
+            subBegin = lineLength * 1;
+            subEnd = subBegin + width * height;
+            //console.log("3: " + subBegin + " -> " + subEnd + ", " + width + " x " + height + ", " + data.subarray(subBegin, subEnd).length);
+            canvas.updateSampler("worldData", 0, line1 + 1, width / 4, height, data.subarray(subBegin, subEnd));
+        }
+    }
+}
+
 
 const d = new WeakMap();
 
@@ -486,7 +532,11 @@ class World extends core.Object
         const sectorData = readUint32Array(ptr, terrain.memory);
         const sectorLine = SECTOR_LINES * this.mapSector(sector);
         d.get(this).worldData.set(sectorData, sectorLine * 4096 * 4);
-        return { x: 0, y: sectorLine, width: 4096, height: SECTOR_LINES, data: sectorData };
+        return {
+            begin: sectorLine * 4096 * 4,
+            end: sectorLine * 4096 * 4 + sectorData.length,
+            data: sectorData
+        };
     }
 
     /* Updates the horizon cube around the given universe location.
@@ -595,11 +645,8 @@ class World extends core.Object
             const entry = priv.updateQueue.shift();
             priv.sectorMap[entry.sector].address -= 100000;
             const sectorData = this.generateSector(entry.sector, entry.loc, entry.lod);
-            const range = [sectorData.y, sectorData.y + sectorData.height];
-
-            const [begin, end] = range;
-            const data = priv.worldData.subarray(begin * 4096 * 4, end * 4096 * 4);
-            canvas.updateSampler("worldData", 0, begin, 4096, end - begin, data);
+           
+            uploadLinearData(canvas, sectorData.begin, sectorData.data);
 
             duration += Date.now() - now;
             ++count;
@@ -611,7 +658,7 @@ class World extends core.Object
         }
 
         this.writeSectorMap();
-        canvas.updateSampler("worldData", 0, 4095, 4096, 1, priv.worldData.subarray(4095 * 4096 * 4));
+        uploadLinearData(canvas, 4095 * 4096 * 4, priv.worldData.subarray(4095 * 4096 * 4));
         console.log("Uploaded " + count + " sectors in " + (Date.now() - now) + "ms");
     }
 
