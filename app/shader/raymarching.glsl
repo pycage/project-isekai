@@ -83,6 +83,7 @@ bool freeEdge = false;
 bool aoEdge = false;
 int debug = 0;
 vec3 debugColor = vec3(1.0, 0.0, 0.0);
+int skipCount = 0;
 
 float randomSeed = 0.0;
 
@@ -193,9 +194,11 @@ int lodOfSector(int sector)
 {
     ivec3 v = sectorLocation(sector);
     int center = horizonSize / 2;
-    int dist = max(max(abs(v.x - center), abs(v.y - center)), abs(v.z - center));
+    int dist = min(2, max(max(abs(v.x - center), abs(v.y - center)), abs(v.z - center)));
 
-    return dist < 3 ? 0 : 1;
+    const int[3] lods = int[](0, 1, 2);
+
+    return lods[dist];
 }
 
 int getCubeLod(int lod)
@@ -307,25 +310,46 @@ uint cubeDataOffset(CubeLocator cube)
 
 /* Returns the data offset for the voxels of a cube.
  */
-uint voxelDataOffset(uint address)
+uint voxelDataOffset(uint address, int cubeLod)
 {
-    return uint(sectorSize * sectorSize * sectorSize) + address * 16u;
+    if (cubeLod < 2)
+    {
+        uint size = cubeLod == 0 ? 16u
+                                 : 2u;
+        return uint(sectorSize * sectorSize * sectorSize) + address * size;
+    }
+    else
+    {
+        return uint(sectorSize * sectorSize * sectorSize) + address / 4u;
+    }
 }
 
 uint voxelType(WorldLocator worldLoc)
 {
-    int cubeLod = getCubeLod(lodOfSector(worldLoc.cube.sector));
-    int bitsPerCoord = 2 / (1 << cubeLod);
+    int lod = lodOfSector(worldLoc.cube.sector);
+    int cubeLod = getCubeLod(lod);
+
     ivec3 loc = ivec3(worldLoc.object.x, worldLoc.object.y, worldLoc.object.z);
     loc /= (1 << cubeLod);
-    int objIndex = (loc.x << (bitsPerCoord + bitsPerCoord)) + (loc.y << bitsPerCoord) + loc.z;
-    
+
     uint sectorOffset = sectorDataOffset(worldLoc.cube.sector);
     uint cubeOffset = sectorOffset + cubeDataOffset(worldLoc.cube);
     uint address = texelFetch(worldData, textureAddress(cubeOffset), 0).b;
-    uint voxelOffset = sectorOffset + voxelDataOffset(address);
 
-    return texelFetch(worldData, textureAddress(voxelOffset + uint(objIndex / 4)), 0)[objIndex % 4];
+    if (cubeLod < 2)
+    {
+        int bitsPerCoord = 2 / (1 << cubeLod);
+        int objIndex = (loc.x << (bitsPerCoord + bitsPerCoord)) + (loc.y << bitsPerCoord) + loc.z;
+        uint voxelOffset = sectorOffset + voxelDataOffset(address, cubeLod);
+        
+        return texelFetch(worldData, textureAddress(voxelOffset + uint(objIndex / 4)), 0)[objIndex % 4];
+    }
+    else
+    {
+        uint voxelOffset = sectorOffset + voxelDataOffset(address, cubeLod);
+        return texelFetch(worldData, textureAddress(voxelOffset), 0)[address % 4u];
+    }
+
 }
 
 vec2 aabbMinMax(float origin, float dir, float boxMin, float boxMax)
@@ -352,6 +376,35 @@ vec3 hitAabb(vec3 origin, vec3 rayDirection)
     vec2 tx = aabbMinMax(origin.x, rayDirection.x, -0.5, 0.5);
     vec2 ty = aabbMinMax(origin.y, rayDirection.y, -0.5, 0.5);
     vec2 tz = aabbMinMax(origin.z, rayDirection.z, -0.5, 0.5);
+
+    // greatest min and smallest max
+    float rayMin = (tx.s > ty.s) ? tx.s : ty.s;
+    float rayMax = (tx.t < ty.t) ? tx.t : ty.t;
+
+    if (tx.s > ty.t || ty.s > tx.t)
+    {
+        return vec3(0.0);
+    }
+    if (rayMin > tz.t || tz.s > rayMax)
+    {
+        return vec3(0.0);
+    }
+    if (tz.s > rayMin)
+    {
+        rayMin = tz.s;
+    }
+    if (tz.t < rayMax)
+    {
+        rayMax = tz.t;
+    }
+    return vec3(rayMin, rayMax, 1.0);
+}
+
+vec3 hitCubeAabb(vec3 origin, vec3 rayDirection, vec3 pos)
+{
+    vec2 tx = aabbMinMax(origin.x, rayDirection.x, pos.x, pos.x + 4.0);
+    vec2 ty = aabbMinMax(origin.y, rayDirection.y, pos.y, pos.y + 4.0);
+    vec2 tz = aabbMinMax(origin.z, rayDirection.z, pos.z, pos.z + 4.0);
 
     // greatest min and smallest max
     float rayMin = (tx.s > ty.s) ? tx.s : ty.s;
@@ -1070,25 +1123,91 @@ Material getObjectMaterial(WorldLocator obj, vec3 p, vec3 worldP, float travelDi
     }
 }
 
-bool cubeHasObject(ObjectLocator objLoc, uvec2 pattern, int lod)
+bool cubeHasVoxel(ObjectLocator objLoc, uvec2 pattern, int lod)
 {
     int cubeLod = getCubeLod(lod);
-    int bitsPerCoord = 2 / (1 << cubeLod);
 
     uint patternHi = pattern.r;
     uint patternLo = pattern.g;
 
-    ivec3 loc = ivec3(objLoc.x, objLoc.y, objLoc.z);
-    loc /= (1 << cubeLod);
-
-    int n = (loc.x << (bitsPerCoord + bitsPerCoord)) +
-            (loc.y << bitsPerCoord) +
-            loc.z;
-    return n < 32 ? (patternLo & uint(1 << n)) > 0u
-                  : (patternHi & uint(1 << (n - 32))) > 0u;
+    if (cubeLod < 2)
+    {
+        ivec3 loc = ivec3(objLoc.x, objLoc.y, objLoc.z);
+        loc /= (1 << cubeLod);
+        int bitsPerCoord = 2 / (1 << cubeLod);
+        int n = (loc.x << (bitsPerCoord + bitsPerCoord)) +
+                (loc.y << bitsPerCoord) +
+                loc.z;
+        return n < 32 ? (patternLo & uint(1 << n)) > 0u
+                      : (patternHi & uint(1 << (n - 32))) > 0u;
+    }
+    else
+    {
+        return patternLo > 0u;
+    }
 }
 
-bool hasObjectAt(vec3 p)
+/* Checks the cube's bit pattern to see if the ray may hit any voxel.
+ */
+bool mayHitVoxels(vec3 entryPoint, vec3 exitPoint, uvec2 pattern, int lod)
+{
+    // entryPoint and exitPoints are in cube-local coordinates (between vec3(0.0) and vec3(4.0))
+
+    if (pattern.r == 0u && pattern.g == 0u)
+    {
+        return false;
+    }
+    if (lod > 0)
+    {
+        return true;
+    }
+
+    const uvec2[4] xSlices = uvec2[](
+        uvec2(0x00000000, 0x0000ffff),   // 0: 0000000000000000 0000000000000000 0000000000000000 1111111111111111
+        uvec2(0x00000000, 0xffff0000),   // 1: 0000000000000000 0000000000000000 1111111111111111 0000000000000000
+        uvec2(0x0000ffff, 0x00000000),   // 2: 0000000000000000 1111111111111111 0000000000000000 0000000000000000
+        uvec2(0xffff0000, 0x00000000)    // 3: 1111111111111111 0000000000000000 0000000000000000 0000000000000000
+    );
+
+    const uvec2[4] ySlices = uvec2[](
+        uvec2(0x000f000f, 0x000f000f),   // 0: 0000000000001111 0000000000001111 0000000000001111 0000000000001111
+        uvec2(0x00f000f0, 0x00f000f0),   // 1: 0000000011110000 0000000011110000 0000000011110000 0000000011110000
+        uvec2(0x0f000f00, 0x0f000f00),   // 2: 0000111100000000 0000111100000000 0000111100000000 0000111100000000
+        uvec2(0xf000f000, 0xf000f000)    // 3: 1111000000000000 1111000000000000 1111000000000000 1111000000000000
+    );
+
+    const uvec2[4] zSlices = uvec2[](
+        uvec2(0x11111111, 0x11111111),   // 0: 0001000100010001 0001000100010001 0001000100010001 0001000100010001
+        uvec2(0x22222222, 0x22222222),   // 1: 0010001000100010 0010001000100010 0010001000100010 0010001000100010
+        uvec2(0x44444444, 0x44444444),   // 2: 0100010001000100 0100010001000100 0100010001000100 0100010001000100
+        uvec2(0x88888888, 0x88888888)    // 3: 1000100010001000 1000100010001000 1000100010001000 1000100010001000
+    );
+
+    int minX = clamp(int(min(entryPoint.x, exitPoint.x)), 0, 3);
+    int minY = clamp(int(min(entryPoint.y, exitPoint.y)), 0, 3);
+    int minZ = clamp(int(min(entryPoint.z, exitPoint.z)), 0, 3);
+    
+    int maxX = clamp(int(max(entryPoint.x, exitPoint.x)), 0, 3);
+    int maxY = clamp(int(max(entryPoint.y, exitPoint.y)), 0, 3);
+    int maxZ = clamp(int(max(entryPoint.z, exitPoint.z)), 0, 3); 
+
+    uvec2 bitsX = uvec2(0);
+    uvec2 bitsY = uvec2(0);
+    uvec2 bitsZ = uvec2(0);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        bitsX = bitsX | ((i >= minX && i <= maxX) ? xSlices[i] : uvec2(0));
+        bitsY = bitsY | ((i >= minY && i <= maxY) ? ySlices[i] : uvec2(0));
+        bitsZ = bitsZ | ((i >= minZ && i <= maxZ) ? zSlices[i] : uvec2(0));
+    }
+
+    uvec2 bits = bitsX & bitsY & bitsZ & pattern;
+
+    return bits.r > 0u || bits.g > 0u;
+}
+
+bool hasVoxelAt(vec3 p)
 {
     CubeLocator cube = makeSuperCubeLocator(p, 0);
     mat4 m = cubeTrafoInverse(cube);
@@ -1098,7 +1217,7 @@ bool hasObjectAt(vec3 p)
     uint offset = sectorDataOffset(cube.sector) + cubeDataOffset(cube);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
 
-    return cubeHasObject(objLoc, patternAndAddress.rg, lodOfSector(cube.sector));
+    return cubeHasVoxel(objLoc, patternAndAddress.rg, lodOfSector(cube.sector));
 }
 
 ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint, vec3 rayDirection)
@@ -1113,29 +1232,33 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
 
     uint offset = sectorDataOffset(cube.sector) + cubeDataOffset(cube);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
-    if (patternAndAddress.r + patternAndAddress.g == 0u)
+    
+    vec3 exitPoint = entryPoint + rayDirection * 8.0; //hitCubeAabb(entryPoint, rayDirection, vec3(cube.x, cube.y, cube.z)).g;
+
+    mat4 m = cubeTrafoInverse(cube);
+    vec3 entryPointT = (m * vec4(entryPoint, 1.0)).xyz;
+    vec3 exitPointT = (m * vec4(exitPoint, 1.0)).xyz;
+
+    if (! mayHitVoxels(entryPointT, exitPointT, patternAndAddress.rg, lodOfSector(cube.sector)))
     {
-        // this cube is empty
+        ++skipCount;
         return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
 
-    mat4 m = cubeTrafoInverse(cube);
     vec3 p = entryPoint;
-    vec3 pT = (m * vec4(p, 1.0)).xyz;
+    vec3 pT = entryPointT;
 
     if (pT.x < 0.0 || pT.y < 0.0 || pT.z < 0.0 ||
         pT.x >= 4.0 || pT.y >= 4.0 || pT.z >= 4.0)
     {
         // entry point is out of bounds
-        debug = 1;
-        debugColor = vec3(1.0, 1.0, 0.0);
         return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
 
     const float gridSize = 1.0;
 
     ObjectLocator objLoc = makeObjectLocator(pT);
-    if (cubeHasObject(objLoc, patternAndAddress.rg, lodOfSector(cube.sector)))
+    if (cubeHasVoxel(objLoc, patternAndAddress.rg, lodOfSector(cube.sector)))
     {
         WorldLocator obj = makeWorldLocator(cube, objLoc);
         return ObjectAndDistance(obj, distance(origin, p), p, transformPoint(p, obj));
@@ -1214,7 +1337,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         }
 
         ObjectLocator objLoc = makeObjectLocator(pT);
-        if (cubeHasObject(objLoc, patternAndAddress.rg, lodOfSector(cube.sector)))
+        if (cubeHasVoxel(objLoc, patternAndAddress.rg, lodOfSector(cube.sector)))
         {
             WorldLocator obj = makeWorldLocator(cube, objLoc);
             return ObjectAndDistance(obj, distance(origin, p), p, transformPoint(p, obj));
@@ -1301,19 +1424,8 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
             advanceZ ? rayDirectionSigns.z : 0.0
         ) * gridSize;
 
-        if (! advanceX && ! advanceZ && advanceY && (length(advanceVec) == 0.0))
-        {
-            debug = 1;
-            debugColor = vec3(rayLengths.z < 100.0 ? 1.0 : 0.0, 0.0, 0.0);
-        }
-        else
-        {
-            debug = 0;
-        }
-        //if (length(advanceVec) == 0.0) debug = 2;
-
         distsOnGrid += abs(advanceVec);
-        if (abs(advanceVec.y) > 0.0) debug = 0;
+
         vec3 epsilon = advanceVec * 0.00001;
 
         // be sure to take only one of the rayLengths
@@ -1322,7 +1434,9 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
                                      (advanceZ ? rayLengths.z : 0.0)) + epsilon;
 
         if (p.x < 0.0 || p.y < 0.0 || p.z < 0.0 ||
-            p.x >= float(sectorSize * cubeSize * horizonSize) || p.y >= float(sectorSize * cubeSize * horizonSize) || p.z >= float(sectorSize * cubeSize * horizonSize) ||
+            p.x >= float(sectorSize * cubeSize * horizonSize) ||
+            p.y >= float(sectorSize * cubeSize * horizonSize) ||
+            p.z >= float(sectorSize * cubeSize * horizonSize) ||
             squaredDist(p, origin) > maxDistanceSquared)
         {
             // out of view
@@ -1491,7 +1605,7 @@ float ambientOcclusion(vec3 p, WorldLocator obj, mat4 surfaceTrafo, float size)
     bool samples[8];
     for (int i = 0; i < 8; ++i)
     {
-        samples[i] = hasObjectAt(samplePoints[i]);
+        samples[i] = hasVoxelAt(samplePoints[i]);
     }
 
     // the distance to the surface edges specifies the occlusion strength
@@ -1562,9 +1676,9 @@ vec3 getCorrectedBoxNormals(WorldLocator obj, vec3 p, vec3 rayDirection)
 
     // check if there are neighbors on sides facing to the camera,
     // as these sides cannot be visible
-    bool hasXNeighbor = hasObjectAt(centerPoint + surfaceNormalX);
-    bool hasYNeighbor = hasObjectAt(centerPoint + surfaceNormalY);
-    bool hasZNeighbor = hasObjectAt(centerPoint + surfaceNormalZ);
+    bool hasXNeighbor = hasVoxelAt(centerPoint + surfaceNormalX);
+    bool hasYNeighbor = hasVoxelAt(centerPoint + surfaceNormalY);
+    bool hasZNeighbor = hasVoxelAt(centerPoint + surfaceNormalZ);
 
     // the interesting (because ambiguous) places are the edges and corners
     bool nearEdgeX = isEdgeX(p, 0.05);
@@ -1696,7 +1810,7 @@ mat3 computeRayTracing(vec3 origin, vec3 rayDirection, float distance, SurfaceNo
             // epsilon must be small for corners, or you'll get reflected far into another block
             currentOrigin = p + rayDirection * 0.01;
 
-            if (hasObjectAt(currentOrigin))
+            if (hasVoxelAt(currentOrigin))
             {
                 // stuck in an object, not good...
                 break;
@@ -1840,6 +1954,7 @@ void main()
     bool isOutline = freeEdge || aoEdge;
     if (renderChannel == OUTLINES_CHANNEL)
     {
+        //fragColor = vec4(vec3(float(skipCount) / 128.0), 1.0);
         fragColor = vec4(vec3(isOutline ? 0.0 : 1.0), 1.0);
         return;
     }
@@ -1847,6 +1962,12 @@ void main()
     vec3 composed = enableOutlines && isOutline ? vec3(0.0)
                                                 : gammaCorrection(lighting * color * exposure);
     
+
+    if (debug != 0)
+    {
+        fragColor = vec4(1.0, 0.0, 1.0, 1.0);
+        return;
+    }
 
     fragColor = vec4(composed, 1.0);
 }

@@ -39,23 +39,15 @@ function cellularNoise2D(px, py, size)
 }
 */
 
-function cubeDataOffset(cubeIndex: i32): i32
-{
-    return cubeIndex * 4;
-}
-
-function voxelDataOffset(address: i32): i32
-{
-    return (SECTOR_SIZE * SECTOR_SIZE * SECTOR_SIZE) * 4 + address * CUBE_SIZE * CUBE_SIZE * CUBE_SIZE;
-}
-
-function addObject(data: Uint32Array, type: i32, x: i32, y: i32, z: i32, lod: i32): void
+function setVoxel(data: Uint32Array, type: i32, x: i32, y: i32, z: i32, lod: i32): void
 {
     const cubeLod: i32 = min(lod, 2);
     const sectorLod: i32 = max(0, lod - 2);
     const cubeSize: i32 = CUBE_SIZE / (1 << cubeLod);
     const sectorSize: i32 = SECTOR_SIZE / (1 << sectorLod);
     const bitsPerCoord: i32 = 2 / (1 << cubeLod);
+    const cubeCount: i32 = sectorSize * sectorSize * sectorSize;
+    const voxelCount: i32 = cubeSize * cubeSize * cubeSize;
 
     const cubeX: i32 = x / cubeSize;
     const cubeY: i32 = y / cubeSize;
@@ -63,31 +55,46 @@ function addObject(data: Uint32Array, type: i32, x: i32, y: i32, z: i32, lod: i3
 
     const cubeIndex = cubeX * sectorSize * sectorSize + cubeY * sectorSize + cubeZ;
 
-    const offset = cubeDataOffset(cubeIndex);
+    const offset = cubeIndex * 4;
 
     let patternHi: u32 = <u32> data[offset];
     let patternLo: u32 = <u32> data[offset + 1];
     const address: i32 = cubeIndex;
 
-    const objIndex = ((x - cubeX * cubeSize) << (bitsPerCoord + bitsPerCoord)) +
-                     ((y - cubeY * cubeSize) << bitsPerCoord) +
-                     (z - cubeZ * cubeSize);
-    const objDataOffset = voxelDataOffset(address) + objIndex;
-                          
-    if (objIndex < 32)
+    if (cubeLod < 2)
     {
-        patternLo |= 1 << <u32> objIndex;
+        const objIndex = ((x - cubeX * cubeSize) << (bitsPerCoord + bitsPerCoord)) +
+                         ((y - cubeY * cubeSize) << bitsPerCoord) +
+                         (z - cubeZ * cubeSize);
+        const objDataOffset = cubeCount * 4 + address * voxelCount + objIndex;
+                            
+        if (objIndex < 32)
+        {
+            patternLo |= 1 << <u32> objIndex;
+        }
+        else
+        {
+            patternHi |= 1 << (<u32> objIndex - 32);
+        }
+
+        data[offset] = patternHi;
+        data[offset + 1] = patternLo;
+        data[offset + 2] = address;
+
+        data[objDataOffset] = type;
     }
     else
     {
-        patternHi |= 1 << (<u32> objIndex - 32);
+        const objDataOffset = cubeCount * 4 + address;
+
+        patternLo |= 1;
+
+        data[offset] = patternHi;
+        data[offset + 1] = patternLo;
+        data[offset + 2] = address;
+
+        data[objDataOffset] = type;
     }
-
-    data[offset] = patternHi;
-    data[offset + 1] = patternLo;
-    data[offset + 2] = address;
-
-    data[objDataOffset] = type;
 }
 
 export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Uint32Array
@@ -134,13 +141,13 @@ export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Uint32Array
                     {
                         type = 4; // rocks
                     }
-                    addObject(data, type, col, layer, row, lod);
+                    setVoxel(data, type, col, layer, row, lod);
                 }
 
                 // fill valleys with water
                 if (worldY < 2)
                 {
-                    addObject(data, 1, col, layer, row, lod);
+                    setVoxel(data, 1, col, layer, row, lod);
                 }
             }
         }

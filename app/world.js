@@ -103,9 +103,9 @@ function lodOfSector(sector)
 {
     const [x, y, z] = sectorLocation(sector).flat();
     const center = Math.floor(HORIZON_SIZE / 2);
-    const dist = Math.max(Math.abs(x - center), Math.abs(y - center), Math.abs(z - center));
+    const dist = Math.min(2, Math.max(Math.abs(x - center), Math.abs(y - center), Math.abs(z - center)));
 
-    return dist < 3 ? 0 : 1;
+    return [0, 1, 2][dist];
 }
 
 function sectorWorldLocation(sector, cubeSize)
