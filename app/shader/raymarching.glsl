@@ -12,7 +12,8 @@ const int worldPageSize = 4096;
 const int[5] DISTANCE_LODS = int[](0, 0, 1, 2, 3);
 const int[5] LOD_CUBE_SIZE =   int[]( 4,  2,  1, 1, 1);
 const int[5] LOD_SECTOR_SIZE = int[](16, 16, 16, 8, 4);
-
+// we use the INVALID_SECTOR_ADDRESS to mark sectors with pending content
+const uint INVALID_SECTOR_ADDRESS = 1u;
 
 in vec2 uv;
 out vec4 fragColor;
@@ -341,6 +342,10 @@ uint voxelType(WorldLocator worldLoc)
     loc /= (1 << cubeLod);
 
     uint sectorOffset = sectorDataOffset(worldLoc.cube.sector);
+    if (sectorOffset == INVALID_SECTOR_ADDRESS)
+    {
+        return 0u;
+    }
     uint cubeOffset = sectorOffset + cubeDataOffset(worldLoc.cube);
     uint address = texelFetch(worldData, textureAddress(cubeOffset), 0).b;
 
@@ -1222,7 +1227,12 @@ bool hasVoxelAt(vec3 p)
     vec3 pT = (m * vec4(p, 1.0)).xyz;
     ObjectLocator objLoc = makeObjectLocator(pT);
 
-    uint offset = sectorDataOffset(cube.sector) + cubeDataOffset(cube);
+    uint sectorOffset = sectorDataOffset(cube.sector);
+    if (sectorOffset == INVALID_SECTOR_ADDRESS)
+    {
+        return false;
+    }
+    uint offset = sectorOffset + cubeDataOffset(cube);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
 
     return cubeHasVoxel(objLoc, patternAndAddress.rg, lodOfSector(cube.sector));
@@ -1232,13 +1242,13 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
 {
     WorldLocator noObject;
 
-    if (mapSector(cube.sector) >= 10000000)
+    uint sectorOffset = sectorDataOffset(cube.sector);
+    if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
         // this sector is empty
         return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
-
-    uint offset = sectorDataOffset(cube.sector) + cubeDataOffset(cube);
+    uint offset = sectorOffset + cubeDataOffset(cube);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
     
     vec3 exitPoint = entryPoint + rayDirection * 8.0; //hitCubeAabb(entryPoint, rayDirection, vec3(cube.x, cube.y, cube.z)).g;

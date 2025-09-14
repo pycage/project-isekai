@@ -16,7 +16,7 @@ const CUBE_VOXEL_STRIDE = CUBE_SIZE * CUBE_SIZE * CUBE_SIZE;
 const DISTANCE_LODS = [0, 0, 1, 2, 3];
 const LOD_CUBE_SIZE =   [ 4,  2,  1, 1, 1];
 const LOD_SECTOR_SIZE = [16, 16, 16, 8, 4];
-
+const INVALID_SECTOR_ADDRESS = 1;
 
 function readUint32Array(ptr, memory)
 {
@@ -614,7 +614,7 @@ class World extends core.Object
                 // this is a new entry
                 //console.log("New Entry, sector: " + entry.sector + ", uloc: " + entry.loc);
                 priv.sectorMap[entry.sector].uloc = entry.loc;
-                priv.sectorMap[entry.sector].address = freedAddressesPerLod[entry.lod].shift() + 10000000 /* mark as empty until uploaded */;
+                priv.sectorMap[entry.sector].address = freedAddressesPerLod[entry.lod].shift() * -1 /* mark as empty until uploaded */;
                 //console.log("use free address: " + sectorMap[entry.sector].address);
                 priv.updateQueue.push(entry);
             }
@@ -652,7 +652,7 @@ class World extends core.Object
         while (priv.updateQueue.length > 0)
         {
             const entry = priv.updateQueue.shift();
-            priv.sectorMap[entry.sector].address -= 10000000;
+            priv.sectorMap[entry.sector].address *= -1;
             const sectorData = this.generateSector(entry.sector, entry.loc, entry.lod);
            
             uploadLinearData(canvas, sectorData.offset, sectorData.data);
@@ -675,7 +675,7 @@ class World extends core.Object
     {
         const priv = d.get(this);
         // divide address by 4 to get pixel address
-        writeArrayAt(priv.worldData, 4096 * 4 * 4095, priv.sectorMap.map(s => s.address >> 2));
+        writeArrayAt(priv.worldData, 4096 * 4 * 4095, priv.sectorMap.map(s => s.address < 0 ? INVALID_SECTOR_ADDRESS : (s.address >> 2)));
     }
 };
 exports.World = World;
