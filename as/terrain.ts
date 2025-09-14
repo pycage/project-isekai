@@ -4,6 +4,9 @@ const CUBE_SIZE: i32 = 4;
 const SECTOR_SIZE: i32 = 16;
 const SECTOR_LINES: i32 = 17;
 
+const LOD_CUBE_SIZE: i32[] =   [ 4,  2,  1, 1, 1];
+const LOD_SECTOR_SIZE: i32[] = [16, 16, 16, 8, 4];
+
 /*
 function cellularNoise2D(px, py, size)
 {
@@ -43,8 +46,8 @@ function setVoxel(data: Uint32Array, type: i32, x: i32, y: i32, z: i32, lod: i32
 {
     const cubeLod: i32 = min(lod, 2);
     const sectorLod: i32 = max(0, lod - 2);
-    const cubeSize: i32 = CUBE_SIZE / (1 << cubeLod);
-    const sectorSize: i32 = SECTOR_SIZE / (1 << sectorLod);
+    const cubeSize: i32 = LOD_CUBE_SIZE[lod];
+    const sectorSize: i32 = LOD_SECTOR_SIZE[lod];
     const bitsPerCoord: i32 = 2 / (1 << cubeLod);
     const cubeCount: i32 = sectorSize * sectorSize * sectorSize;
     const voxelCount: i32 = cubeSize * cubeSize * cubeSize;
@@ -101,15 +104,16 @@ export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Uint32Array
 {
     // a sector consists of SECTOR_SIZE * SECTOR_SIZE * SECTOR_SIZE cubes
 
-    const cubeLod: i32 = min(lod, 2);
-    const sectorLod: i32 = max(0, lod - 2);
-    const cubeSize: i32 = CUBE_SIZE / (1 << cubeLod);
-    const sectorSize: i32 = SECTOR_SIZE / (1 << sectorLod);
+    const cubeSize: i32 = LOD_CUBE_SIZE[lod];
+    const sectorSize: i32 = LOD_SECTOR_SIZE[lod];
 
-    const data = new Uint32Array(SECTOR_LINES * 4096 * 4);
+    const dataSize: i32 = sectorSize * sectorSize * sectorSize * 4 +
+                          sectorSize * sectorSize * sectorSize * cubeSize * cubeSize * cubeSize;
+
+    const data = new Uint32Array(dataSize); //SECTOR_LINES * 4096 * 4);
     data.fill(0, 0);
 
-    const fullResScale = SECTOR_SIZE * CUBE_SIZE;
+    const fullResScale = LOD_SECTOR_SIZE[0] * LOD_CUBE_SIZE[0];
     const lodScale = sectorSize * cubeSize;
 
     for (let col: i32 = 0; col < lodScale; ++col)

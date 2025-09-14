@@ -9,9 +9,14 @@ const HORIZON_SIZE = 5;
 const SECTOR_SIZE = 16;
 // the side-length of a cube in voxels
 const CUBE_SIZE = 4;
-const SECTOR_LINES = 17;
+
 const VOXEL_DATA_OFFSET = SECTOR_SIZE * SECTOR_SIZE * SECTOR_SIZE;
 const CUBE_VOXEL_STRIDE = CUBE_SIZE * CUBE_SIZE * CUBE_SIZE;
+
+const DISTANCE_LODS = [0, 0, 1, 2, 3];
+const LOD_CUBE_SIZE =   [ 4,  2,  1, 1, 1];
+const LOD_SECTOR_SIZE = [16, 16, 16, 8, 4];
+
 
 function readUint32Array(ptr, memory)
 {
@@ -97,7 +102,7 @@ function sectorLocation(sector)
     return mat.vec(x, y, z);
 }
 
-/* Returns the level of detail for the given sector.
+/* Returns the level-of-detail for the given sector number.
  */
 function lodOfSector(sector)
 {
@@ -105,7 +110,7 @@ function lodOfSector(sector)
     const center = Math.floor(HORIZON_SIZE / 2);
     const dist = Math.min(2, Math.max(Math.abs(x - center), Math.abs(y - center), Math.abs(z - center)));
 
-    return [0, 1, 2][dist];
+    return DISTANCE_LODS[dist];
 }
 
 function sectorWorldLocation(sector, cubeSize)
@@ -236,7 +241,11 @@ class World extends core.Object
         // init sector map
         for (let i = 0; i < HORIZON_SIZE * HORIZON_SIZE * HORIZON_SIZE; ++i)
         {
-            priv.sectorMap.push({ address: i, uloc: mat.vec(0, 0, 0) });
+            const dataSize = (LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0]) * 4 +
+                             LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] *
+                             LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0];
+            const physicalAddress = i; // * dataSize;
+            priv.sectorMap.push({ address: physicalAddress, uloc: mat.vec(0, 0, 0) });
         }
 
         this.writeSectorMap();
@@ -257,7 +266,10 @@ class World extends core.Object
      */
     sectorDataOffset(sector)
     {
-        return SECTOR_LINES * this.mapSector(sector) * 4096 * 4;
+        //return this.mapSector(sector);
+        return this.mapSector(sector) *
+               (LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * 4 +
+                LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0]);
     }
 
     /* Returns the data offset for accessing a cube, relative to the sector offset.
@@ -530,11 +542,11 @@ class World extends core.Object
         //console.log("Generating sector " + sector + " around " + JSON.stringify(universeLocation) + " with LOD " + lod);
         const ptr = terrain.generateSector(universeLocation[0][0], universeLocation[1][0], universeLocation[2][0], lod);
         const sectorData = readUint32Array(ptr, terrain.memory);
-        const sectorLine = SECTOR_LINES * this.mapSector(sector);
-        d.get(this).worldData.set(sectorData, sectorLine * 4096 * 4);
+        const sectorDataOffset = this.sectorDataOffset(sector);
+
+        d.get(this).worldData.set(sectorData, sectorDataOffset);
         return {
-            begin: sectorLine * 4096 * 4,
-            end: sectorLine * 4096 * 4 + sectorData.length,
+            offset: sectorDataOffset,
             data: sectorData
         };
     }
@@ -605,7 +617,7 @@ class World extends core.Object
                 // this is a new entry
                 //console.log("New Entry, sector: " + entry.sector + ", uloc: " + entry.loc);
                 priv.sectorMap[entry.sector].uloc = entry.loc;
-                priv.sectorMap[entry.sector].address = freedAddressesPerLod[entry.lod].shift() + 100000 /* mark as empty until uploaded */;
+                priv.sectorMap[entry.sector].address = freedAddressesPerLod[entry.lod].shift() + 10000000 /* mark as empty until uploaded */;
                 //console.log("use free address: " + sectorMap[entry.sector].address);
                 priv.updateQueue.push(entry);
             }
@@ -643,10 +655,10 @@ class World extends core.Object
         while (priv.updateQueue.length > 0)
         {
             const entry = priv.updateQueue.shift();
-            priv.sectorMap[entry.sector].address -= 100000;
+            priv.sectorMap[entry.sector].address -= 10000000;
             const sectorData = this.generateSector(entry.sector, entry.loc, entry.lod);
            
-            uploadLinearData(canvas, sectorData.begin, sectorData.data);
+            uploadLinearData(canvas, sectorData.offset, sectorData.data);
 
             duration += Date.now() - now;
             ++count;

@@ -8,7 +8,11 @@ const int horizonSize = 5;
 const int sectorSize = 16;
 const int cubeSize = 4;
 const int worldPageSize = 4096;
-const int sectorLines = 17;
+
+const int[5] DISTANCE_LODS = int[](0, 0, 1, 2, 3);
+const int[5] LOD_CUBE_SIZE =   int[]( 4,  2,  1, 1, 1);
+const int[5] LOD_SECTOR_SIZE = int[](16, 16, 16, 8, 4);
+
 
 in vec2 uv;
 out vec4 fragColor;
@@ -176,6 +180,9 @@ ivec2 textureAddress(uint address)
     );
 }
 
+/* Maps a sector number to the physical address according to the
+ * sector mapping table.
+ */
 int mapSector(int sector)
 {
     return int(texelFetch(worldData, ivec2(sector / 4, worldPageSize - 1), 0)[sector % 4]);
@@ -190,15 +197,15 @@ ivec3 sectorLocation(int sector)
     return ivec3(x, y, z);
 }
 
+/* Returns the level-of-detail for the given sector number.
+ */
 int lodOfSector(int sector)
 {
     ivec3 v = sectorLocation(sector);
     int center = horizonSize / 2;
     int dist = min(2, max(max(abs(v.x - center), abs(v.y - center)), abs(v.z - center)));
 
-    const int[3] lods = int[](0, 1, 2);
-
-    return lods[dist];
+    return DISTANCE_LODS[dist];
 }
 
 int getCubeLod(int lod)
@@ -290,15 +297,21 @@ mat4 cubeTrafoInverse(CubeLocator cube)
  */
 uint sectorDataOffset(int sector)
 {
-    return uint(sectorLines * mapSector(sector) * worldPageSize);
+    int lod = lodOfSector(sector);
+    int dataSize = LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] +
+                   (LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0]) / 4;
+
+    return uint(dataSize * mapSector(sector));
+    //return uint(mapSector(sector));
 }
 
 /* Returns the data offset for the given cube.
  */
 uint cubeDataOffset(CubeLocator cube)
 {
+    int lod = lodOfSector(cube.sector);
     int sectorLod = getSectorLod(lodOfSector(cube.sector));
-    int sectorSizeLod = sectorSize / (1 << sectorLod);
+    int sectorSizeLod = LOD_SECTOR_SIZE[lod];
 
     ivec3 cubeLoc = ivec3(cube.x, cube.y, cube.z);
     cubeLoc /= (1 << sectorLod);
@@ -1224,7 +1237,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
 {
     WorldLocator noObject;
 
-    if (mapSector(cube.sector) >= 100000)
+    if (mapSector(cube.sector) >= 10000000)
     {
         // this sector is empty
         return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
