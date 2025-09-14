@@ -5,16 +5,14 @@ const terrain = await shRequire("./wasm/terrain.wasm");
 
 // the side-length of the horizone cube in sectors (must be odd so there is a center)
 const HORIZON_SIZE = 5;
-// the side-length of a sector in cubes
-const SECTOR_SIZE = 16;
-// the side-length of a cube in voxels
-const CUBE_SIZE = 4;
 
-const VOXEL_DATA_OFFSET = SECTOR_SIZE * SECTOR_SIZE * SECTOR_SIZE;
-const CUBE_VOXEL_STRIDE = CUBE_SIZE * CUBE_SIZE * CUBE_SIZE;
+const VOXEL_DATA_OFFSET = 16 * 16 * 16;
+const CUBE_VOXEL_STRIDE = 4 * 4 * 4;
 
 const DISTANCE_LODS = [0, 0, 1, 2, 3];
+// the side-length of a cube in voxels
 const LOD_CUBE_SIZE =   [ 4,  2,  1, 1, 1];
+// the side-length of a sector in cubes
 const LOD_SECTOR_SIZE = [16, 16, 16, 8, 4];
 const INVALID_SECTOR_ADDRESS = 1;
 
@@ -115,13 +113,13 @@ function lodOfSector(sector)
 
 function sectorWorldLocation(sector, cubeSize)
 {
-    const sectorLength = SECTOR_SIZE * cubeSize;
+    const sectorLength = LOD_SECTOR_SIZE[0] * cubeSize;
     return mat.mul(sectorLocation(sector), sectorLength);
 }
 
 function makeCubeLocator(loc, cubeSize)
 {
-    const sectorLength = SECTOR_SIZE * cubeSize;
+    const sectorLength = LOD_SECTOR_SIZE[0] * cubeSize;
 
     const x = Math.floor(loc[0][0] / sectorLength);
     const y = Math.floor(loc[1][0] / sectorLength);
@@ -288,7 +286,7 @@ class World extends core.Object
     {
         const lod = lodOfSector(cube.sector);
         const sectorLod = Math.max(0, lod - 2);
-        const sectorSizeWithLod = SECTOR_SIZE / (1 << sectorLod);
+        const sectorSizeWithLod = LOD_SECTOR_SIZE[lod];
 
         const cx = Math.floor(cube.x / (1 << sectorLod));
         const cy = Math.floor(cube.y / (1 << sectorLod));
@@ -301,7 +299,7 @@ class World extends core.Object
      */
     sectorAt(loc)
     {
-        const sectorLength = SECTOR_SIZE * CUBE_SIZE;
+        const sectorLength = LOD_SECTOR_SIZE[0] * LOD_CUBE_SIZE[0];
 
         const v = mat.mul(loc, 1 / sectorLength);
         const x = Math.floor(v[0][0]);
@@ -325,14 +323,14 @@ class World extends core.Object
      */
     cubeOf(loc)
     {
-        return makeCubeLocator(loc, CUBE_SIZE);
+        return makeCubeLocator(loc, LOD_CUBE_SIZE[0]);
     }
 
     /* Returns the world location of the given cube.
      */
     cubeLocation(cube)
     {
-        return resolveCubeLocator(cube, CUBE_SIZE);
+        return resolveCubeLocator(cube, LOD_CUBE_SIZE[0]);
     }
 
     /* Returns the cube to world transformation matrix of the given cube.
@@ -353,7 +351,7 @@ class World extends core.Object
      */
     cubesOnRay(origin, rayDirection)
     {
-        const cubeSize = CUBE_SIZE;
+        const cubeSize = LOD_CUBE_SIZE[0];
 
         const cubes = [];
 

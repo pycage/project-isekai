@@ -5,12 +5,12 @@ precision highp usampler2D;
 
 // world configuration
 const int horizonSize = 5;
-const int sectorSize = 16;
-const int cubeSize = 4;
 const int worldPageSize = 4096;
 
 const int[5] DISTANCE_LODS = int[](0, 0, 1, 2, 3);
+// the side-length of a cube in voxels
 const int[5] LOD_CUBE_SIZE =   int[]( 4,  2,  1, 1, 1);
+// the side-length of a sector in cubes
 const int[5] LOD_SECTOR_SIZE = int[](16, 16, 16, 8, 4);
 // we use the INVALID_SECTOR_ADDRESS to mark sectors with pending content
 const uint INVALID_SECTOR_ADDRESS = 1u;
@@ -221,6 +221,8 @@ int getSectorLod(int lod)
 
 vec3 resolveCubeLocator(CubeLocator cube)
 {
+    const int sectorSize = LOD_SECTOR_SIZE[0];
+    const int cubeSize = LOD_CUBE_SIZE[0];
     return vec3(sectorLocation(cube.sector)) * float(sectorSize * cubeSize) + vec3(
         float(cube.x * cubeSize),
         float(cube.y * cubeSize),
@@ -230,6 +232,8 @@ vec3 resolveCubeLocator(CubeLocator cube)
 
 CubeLocator makeSuperCubeLocator(vec3 v, int level)
 {
+    const int sectorSize = LOD_SECTOR_SIZE[0];
+    const int cubeSize = LOD_CUBE_SIZE[0];
     v = clamp(v, 0.0, float(sectorSize * horizonSize * cubeSize - 1));
     int superCubeSize = cubeSize << level;
     int sectorLength = sectorSize * superCubeSize;
@@ -244,6 +248,8 @@ CubeLocator makeSuperCubeLocator(vec3 v, int level)
 
 bool isSuperCubeEmpty(CubeLocator superCube, int level)
 {
+    const int sectorSize = LOD_SECTOR_SIZE[0];
+    const int cubeSize = LOD_CUBE_SIZE[0];
     int index = superCube.x * sectorSize * sectorSize + superCube.y * sectorSize + superCube.z;
     uvec4 data = texelFetch(worldData, ivec2(index / 4, 3000 + level), 0);
     return data[index % 4] == 0u;
@@ -321,6 +327,7 @@ uint cubeDataOffset(CubeLocator cube)
  */
 uint voxelDataOffset(uint address, int cubeLod)
 {
+    const int sectorSize = LOD_SECTOR_SIZE[0];
     if (cubeLod < 2)
     {
         uint size = cubeLod == 0 ? 16u
@@ -1369,6 +1376,9 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
 {
     WorldLocator noObject;
     ObjectAndDistance result;
+
+    const int sectorSize = LOD_SECTOR_SIZE[0];
+    const int cubeSize = LOD_CUBE_SIZE[0];
 
     float maxDistanceSquared = maxDistance * maxDistance;
     const float gridSize = 4.0;
