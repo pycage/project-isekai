@@ -244,7 +244,7 @@ class World extends core.Object
             const dataSize = (LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0]) * 4 +
                              LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] *
                              LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0];
-            const physicalAddress = i; // * dataSize;
+            const physicalAddress = i * dataSize;
             priv.sectorMap.push({ address: physicalAddress, uloc: mat.vec(0, 0, 0) });
         }
 
@@ -266,10 +266,7 @@ class World extends core.Object
      */
     sectorDataOffset(sector)
     {
-        //return this.mapSector(sector);
-        return this.mapSector(sector) *
-               (LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * 4 +
-                LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0]);
+        return this.mapSector(sector);
     }
 
     /* Returns the data offset for accessing a cube, relative to the sector offset.
@@ -677,7 +674,8 @@ class World extends core.Object
     writeSectorMap()
     {
         const priv = d.get(this);
-        writeArrayAt(priv.worldData, 4096 * 4 * 4095, priv.sectorMap.map(s => s.address));
+        // divide address by 4 to get pixel address
+        writeArrayAt(priv.worldData, 4096 * 4 * 4095, priv.sectorMap.map(s => s.address >> 2));
     }
 };
 exports.World = World;

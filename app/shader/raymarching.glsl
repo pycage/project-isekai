@@ -297,12 +297,7 @@ mat4 cubeTrafoInverse(CubeLocator cube)
  */
 uint sectorDataOffset(int sector)
 {
-    int lod = lodOfSector(sector);
-    int dataSize = LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] +
-                   (LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0]) / 4;
-
-    return uint(dataSize * mapSector(sector));
-    //return uint(mapSector(sector));
+    return uint(mapSector(sector));
 }
 
 /* Returns the data offset for the given cube.
