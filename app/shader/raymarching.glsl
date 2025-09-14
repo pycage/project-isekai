@@ -4,10 +4,10 @@ precision highp int;    /* Android needs this for sufficient precision */
 precision highp usampler2D;
 
 // world configuration
-const int horizonSize = 5;
+const int horizonSize = 3;
 const int worldPageSize = 4096;
 
-const int[5] DISTANCE_LODS = int[](0, 0, 1, 2, 3);
+const int[5] DISTANCE_LODS = int[](0, 1, 1, 2, 3);
 // the side-length of a cube in voxels
 const int[5] LOD_CUBE_SIZE =   int[]( 4,  2,  1, 1, 1);
 // the side-length of a sector in cubes

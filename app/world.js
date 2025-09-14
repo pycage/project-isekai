@@ -4,12 +4,14 @@ const sdf = await shRequire("./sdf.js");
 const terrain = await shRequire("./wasm/terrain.wasm");
 
 // the side-length of the horizone cube in sectors (must be odd so there is a center)
-const HORIZON_SIZE = 5;
+const HORIZON_SIZE = 3;
 
 const VOXEL_DATA_OFFSET = 16 * 16 * 16;
 const CUBE_VOXEL_STRIDE = 4 * 4 * 4;
 
-const DISTANCE_LODS = [0, 0, 1, 2, 3];
+const DISTANCE_LODS = [0, 1, 1, 2, 3];
+// the data stride of a sector
+const LOD_SECTOR_STRIDE = [69632 * 4, 12288 * 4, 5120 * 4, 320 * 4, 80 * 4, 10 * 4];
 // the side-length of a cube in voxels
 const LOD_CUBE_SIZE =   [ 4,  2,  1, 1, 1];
 // the side-length of a sector in cubes
@@ -234,24 +236,58 @@ class World extends core.Object
             centerSector: makeSectorIndex(horizonCenter, horizonCenter, horizonCenter)
         });
 
+        this.initializeSectorMap();
+   }
+
+    get worldData() { return d.get(this).worldData; }
+    get sectorMap() { return d.get(this).sectorMap.map(s => s.address); }
+    get centerSector() { return d.get(this).centerSector; }
+
+    /* Initializes the sector map.
+     */
+    initializeSectorMap()
+    {
         const priv = d.get(this);
 
-        // init sector map
+        // count the sectors per LOD
+        let lodSectorCounts = [0, 0, 0, 0, 0];
         for (let i = 0; i < HORIZON_SIZE * HORIZON_SIZE * HORIZON_SIZE; ++i)
         {
-            const dataSize = (LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0]) * 4 +
-                             LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] * LOD_SECTOR_SIZE[0] *
-                             LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0] * LOD_CUBE_SIZE[0];
-            const physicalAddress = i * dataSize;
+            const lod = lodOfSector(i);
+            ++lodSectorCounts[lod];
+        }
+        console.log("LOD sector counts: " + JSON.stringify(lodSectorCounts));
+
+        // compute the LOD address offsets
+        const lodSlotSizes = [
+            lodSectorCounts[0] * LOD_SECTOR_STRIDE[0],
+            lodSectorCounts[1] * LOD_SECTOR_STRIDE[1],
+            lodSectorCounts[2] * LOD_SECTOR_STRIDE[2],
+            lodSectorCounts[3] * LOD_SECTOR_STRIDE[3],
+            lodSectorCounts[4] * LOD_SECTOR_STRIDE[4]
+        ];
+        const lodSlotOffsets = [0];
+        let offset = 0;
+        for (let i = 0; i < lodSlotSizes.length; ++i)
+        {
+            offset += lodSlotSizes[i];
+            lodSlotOffsets.push(offset);
+        }
+        console.log("LOD slot offsets: " + JSON.stringify(lodSlotOffsets));
+
+        lodSectorCounts = [0, 0, 0, 0, 0];
+        for (let i = 0; i < HORIZON_SIZE * HORIZON_SIZE * HORIZON_SIZE; ++i)
+        {
+            const lod = lodOfSector(i);
+            const sectorLodIdx = lodSectorCounts[lod];
+            console.log("Sector " + i + " -> LOD " + lod + " idx " + sectorLodIdx);
+            ++lodSectorCounts[lod];
+            const physicalAddress = lodSlotOffsets[lod] + sectorLodIdx * LOD_SECTOR_STRIDE[lod];
             priv.sectorMap.push({ address: physicalAddress, uloc: mat.vec(0, 0, 0) });
         }
 
         this.writeSectorMap();
     }
-
-    get worldData() { return d.get(this).worldData; }
-    get sectorMap() { return d.get(this).sectorMap.map(s => s.address); }
-    get centerSector() { return d.get(this).centerSector; }
 
     /* Maps a sector to its actual physical location.
      */
@@ -651,6 +687,7 @@ class World extends core.Object
         {
             const entry = priv.updateQueue.shift();
             priv.sectorMap[entry.sector].address *= -1;
+            //priv.sectorMap[entry.sector].address -= 1;
             const sectorData = this.generateSector(entry.sector, entry.loc, entry.lod);
            
             uploadLinearData(canvas, sectorData.offset, sectorData.data);
