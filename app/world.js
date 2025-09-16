@@ -4,12 +4,12 @@ const sdf = await shRequire("./sdf.js");
 const terrain = await shRequire("./wasm/terrain.wasm");
 
 // the side-length of the horizone cube in sectors (must be odd so there is a center)
-const HORIZON_SIZE = 3;
+const HORIZON_SIZE = 7;
 
 const VOXEL_DATA_OFFSET = 16 * 16 * 16;
 const CUBE_VOXEL_STRIDE = 4 * 4 * 4;
 
-const DISTANCE_LODS = [0, 1, 1, 2, 3];
+const DISTANCE_LODS = [0, 1, 1, 2, 2];
 // the data stride of a sector
 const LOD_SECTOR_STRIDE = [69632 * 4, 12288 * 4, 5120 * 4, 320 * 4, 80 * 4, 10 * 4];
 // the side-length of a cube in voxels
@@ -205,7 +205,7 @@ function uploadLinearData(canvas, begin, data)
         //console.log("2: " + subBegin + " -> " + subEnd + ", " + width + " x " + height + ", " + data.subarray(subBegin, subEnd).length);
         canvas.updateSampler("worldData", 0, line2, width / 4, height, data.subarray(subBegin, subEnd));
 
-        if (line1 + 1 < line2 - 1)
+        if (line1 + 1 <= line2 - 1)
         {
             // inbetween
             width = lineLength;
@@ -280,7 +280,7 @@ class World extends core.Object
         {
             const lod = lodOfSector(i);
             const sectorLodIdx = lodSectorCounts[lod];
-            console.log("Sector " + i + " -> LOD " + lod + " idx " + sectorLodIdx);
+            //console.log("Sector " + i + " -> LOD " + lod + " idx " + sectorLodIdx);
             ++lodSectorCounts[lod];
             const physicalAddress = lodSlotOffsets[lod] + sectorLodIdx * LOD_SECTOR_STRIDE[lod];
             priv.sectorMap.push({ address: physicalAddress, uloc: mat.vec(0, 0, 0) });
@@ -689,6 +689,7 @@ class World extends core.Object
             priv.sectorMap[entry.sector].address *= -1;
             //priv.sectorMap[entry.sector].address -= 1;
             const sectorData = this.generateSector(entry.sector, entry.loc, entry.lod);
+            console.log("Generated sector " + entry.sector + ", offset: " + sectorData.offset + ", size: " + sectorData.data.length);
            
             uploadLinearData(canvas, sectorData.offset, sectorData.data);
 
@@ -710,7 +711,9 @@ class World extends core.Object
     {
         const priv = d.get(this);
         // divide address by 4 to get pixel address
-        writeArrayAt(priv.worldData, 4096 * 4 * 4095, priv.sectorMap.map(s => s.address < 0 ? INVALID_SECTOR_ADDRESS : (s.address >> 2)));
+        const data = priv.sectorMap.map(s => s.address < 0 ? INVALID_SECTOR_ADDRESS : (s.address >> 2));
+        //console.log("Write Sector Map: " + JSON.stringify(data));
+        writeArrayAt(priv.worldData, 4096 * 4 * 4095, data);
     }
 };
 exports.World = World;

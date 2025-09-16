@@ -1,9 +1,5 @@
 import { mandelbrot } from  "./mandelbrot.ts";
 
-const CUBE_SIZE: i32 = 4;
-const SECTOR_SIZE: i32 = 16;
-const SECTOR_LINES: i32 = 17;
-
 const LOD_CUBE_SIZE: i32[] =   [ 4,  2,  1, 1, 1];
 const LOD_SECTOR_SIZE: i32[] = [16, 16, 16, 8, 4];
 
@@ -48,7 +44,7 @@ function setVoxel(data: Uint32Array, type: i32, x: i32, y: i32, z: i32, lod: i32
     const sectorLod: i32 = max(0, lod - 2);
     const cubeSize: i32 = LOD_CUBE_SIZE[lod];
     const sectorSize: i32 = LOD_SECTOR_SIZE[lod];
-    const bitsPerCoord: i32 = 2 / (1 << cubeLod);
+    const bitsPerCoord: i32 = cubeLod == 0 ? 2 : 1;
     const cubeCount: i32 = sectorSize * sectorSize * sectorSize;
     const voxelCount: i32 = cubeSize * cubeSize * cubeSize;
 
@@ -56,7 +52,9 @@ function setVoxel(data: Uint32Array, type: i32, x: i32, y: i32, z: i32, lod: i32
     const cubeY: i32 = y / cubeSize;
     const cubeZ: i32 = z / cubeSize;
 
-    const cubeIndex = cubeX * sectorSize * sectorSize + cubeY * sectorSize + cubeZ;
+    const cubeIndex = cubeX * sectorSize * sectorSize +
+                      cubeY * sectorSize +
+                      cubeZ;
 
     const offset = cubeIndex * 4;
 
@@ -66,18 +64,18 @@ function setVoxel(data: Uint32Array, type: i32, x: i32, y: i32, z: i32, lod: i32
 
     if (cubeLod < 2)
     {
-        const objIndex = ((x - cubeX * cubeSize) << (bitsPerCoord + bitsPerCoord)) +
-                         ((y - cubeY * cubeSize) << bitsPerCoord) +
-                         (z - cubeZ * cubeSize);
-        const objDataOffset = cubeCount * 4 + address * voxelCount + objIndex;
-                            
-        if (objIndex < 32)
+        const voxelIndex = ((x - cubeX * cubeSize) << (bitsPerCoord + bitsPerCoord)) +
+                           ((y - cubeY * cubeSize) << bitsPerCoord) +
+                           (z - cubeZ * cubeSize);
+        const objDataOffset = cubeCount * 4 + address * voxelCount + voxelIndex;
+
+        if (voxelIndex < 32)
         {
-            patternLo |= 1 << <u32> objIndex;
+            patternLo |= 1 << <u32> voxelIndex;
         }
         else
         {
-            patternHi |= 1 << (<u32> objIndex - 32);
+            patternHi |= 1 << (<u32> voxelIndex - 32);
         }
 
         data[offset] = patternHi;
@@ -110,8 +108,8 @@ export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Uint32Array
     const dataSize: i32 = sectorSize * sectorSize * sectorSize * 4 +
                           sectorSize * sectorSize * sectorSize * cubeSize * cubeSize * cubeSize;
 
-    const data = new Uint32Array(dataSize); //SECTOR_LINES * 4096 * 4);
-    data.fill(0, 0);
+    const data = new Uint32Array(dataSize);
+    data.fill(0);
 
     const fullResScale = LOD_SECTOR_SIZE[0] * LOD_CUBE_SIZE[0];
     const lodScale = sectorSize * cubeSize;

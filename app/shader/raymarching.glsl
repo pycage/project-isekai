@@ -4,10 +4,10 @@ precision highp int;    /* Android needs this for sufficient precision */
 precision highp usampler2D;
 
 // world configuration
-const int horizonSize = 3;
+const int horizonSize = 7;
 const int worldPageSize = 4096;
 
-const int[5] DISTANCE_LODS = int[](0, 1, 1, 2, 3);
+const int[5] DISTANCE_LODS = int[](0, 1, 1, 2, 2);
 // the side-length of a cube in voxels
 const int[5] LOD_CUBE_SIZE =   int[]( 4,  2,  1, 1, 1);
 // the side-length of a sector in cubes
@@ -307,18 +307,20 @@ uint sectorDataOffset(int sector)
     return uint(mapSector(sector));
 }
 
-/* Returns the data offset for the given cube.
+/* Returns the data offset for the given cube within a sector.
  */
 uint cubeDataOffset(CubeLocator cube)
 {
     int lod = lodOfSector(cube.sector);
-    int sectorLod = getSectorLod(lodOfSector(cube.sector));
-    int sectorSizeLod = LOD_SECTOR_SIZE[lod];
+    int sectorLod = getSectorLod(lod);
+    int sectorSize = LOD_SECTOR_SIZE[lod];
 
     ivec3 cubeLoc = ivec3(cube.x, cube.y, cube.z);
     cubeLoc /= (1 << sectorLod);
 
-    int index = cubeLoc.x * sectorSizeLod * sectorSizeLod + cubeLoc.y * sectorSizeLod + cubeLoc.z;
+    int index = cubeLoc.x * sectorSize * sectorSize +
+                cubeLoc.y * sectorSize +
+                cubeLoc.z;
     
     return uint(index);
 }
@@ -346,11 +348,12 @@ uint voxelType(WorldLocator worldLoc)
     int cubeLod = getCubeLod(lod);
 
     ivec3 loc = ivec3(worldLoc.object.x, worldLoc.object.y, worldLoc.object.z);
-    loc /= (1 << cubeLod);
+    loc /= cubeLod == 0 ? 1 : 2;
 
     uint sectorOffset = sectorDataOffset(worldLoc.cube.sector);
     if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
+        debug = 2;
         return 0u;
     }
     uint cubeOffset = sectorOffset + cubeDataOffset(worldLoc.cube);
@@ -358,18 +361,19 @@ uint voxelType(WorldLocator worldLoc)
 
     if (cubeLod < 2)
     {
-        int bitsPerCoord = 2 / (1 << cubeLod);
-        int objIndex = (loc.x << (bitsPerCoord + bitsPerCoord)) + (loc.y << bitsPerCoord) + loc.z;
+        int bitsPerCoord = cubeLod == 0 ? 2 : 1;
+        int voxelIndex = (loc.x << (bitsPerCoord + bitsPerCoord)) +
+                         (loc.y << bitsPerCoord) +
+                         loc.z;
         uint voxelOffset = sectorOffset + voxelDataOffset(address, cubeLod);
-        
-        return texelFetch(worldData, textureAddress(voxelOffset + uint(objIndex / 4)), 0)[objIndex % 4];
+
+        return texelFetch(worldData, textureAddress(voxelOffset + uint(voxelIndex / 4)), 0)[voxelIndex % 4];
     }
     else
     {
         uint voxelOffset = sectorOffset + voxelDataOffset(address, cubeLod);
         return texelFetch(worldData, textureAddress(voxelOffset), 0)[address % 4u];
     }
-
 }
 
 vec2 aabbMinMax(float origin, float dir, float boxMin, float boxMax)
@@ -1237,6 +1241,7 @@ bool hasVoxelAt(vec3 p)
     uint sectorOffset = sectorDataOffset(cube.sector);
     if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
+        debug = 2;
         return false;
     }
     uint offset = sectorOffset + cubeDataOffset(cube);
@@ -1253,6 +1258,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
         // this sector is empty
+        debug = 2;
         return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
     uint offset = sectorOffset + cubeDataOffset(cube);
