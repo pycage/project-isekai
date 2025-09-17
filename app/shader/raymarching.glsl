@@ -4,10 +4,10 @@ precision highp int;    /* Android needs this for sufficient precision */
 precision highp usampler2D;
 
 // world configuration
-const int horizonSize = 7;
+const int horizonSize = 9;
 const int worldPageSize = 4096;
 
-const int[5] DISTANCE_LODS = int[](0, 1, 1, 2, 2);
+const int[6] DISTANCE_LODS = int[](0, 0, 1, 2, 2, 2);
 // the side-length of a cube in voxels
 const int[5] LOD_CUBE_SIZE =   int[]( 4,  2,  1, 1, 1);
 // the side-length of a sector in cubes
@@ -204,7 +204,7 @@ int lodOfSector(int sector)
 {
     ivec3 v = sectorLocation(sector);
     int center = horizonSize / 2;
-    int dist = min(2, max(max(abs(v.x - center), abs(v.y - center)), abs(v.z - center)));
+    int dist = max(max(abs(v.x - center), abs(v.y - center)), abs(v.z - center));
 
     return DISTANCE_LODS[dist];
 }
@@ -1352,7 +1352,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         ) * gridSize;
 
         distsOnGrid += abs(advanceVec);
-        vec3 epsilon = advanceVec * 0.00001;
+        vec3 epsilon = advanceVec * 0.0001;
 
         // be sure to take only one of the rayLengths
         p = entryPoint + rayDirection * ((advanceX ? rayLengths.x : 0.0) +
@@ -1460,7 +1460,7 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
 
         distsOnGrid += abs(advanceVec);
 
-        vec3 epsilon = advanceVec * 0.00001;
+        vec3 epsilon = advanceVec * 0.0001;
 
         // be sure to take only one of the rayLengths
         p = origin + rayDirection * ((advanceX ? rayLengths.x : 0.0) +

@@ -3,13 +3,13 @@ const mat = await shRequire("shellfish/core/matrix");
 const sdf = await shRequire("./sdf.js");
 const terrain = await shRequire("./wasm/terrain.wasm");
 
-// the side-length of the horizone cube in sectors (must be odd so there is a center)
-const HORIZON_SIZE = 7;
+// the side-length of the horizon cube in sectors (must be odd so there is a center)
+const HORIZON_SIZE = 9;
 
 const VOXEL_DATA_OFFSET = 16 * 16 * 16;
 const CUBE_VOXEL_STRIDE = 4 * 4 * 4;
 
-const DISTANCE_LODS = [0, 1, 1, 2, 2];
+const DISTANCE_LODS = [0, 0, 1, 2, 2, 2];
 // the data stride of a sector
 const LOD_SECTOR_STRIDE = [69632 * 4, 12288 * 4, 5120 * 4, 320 * 4, 80 * 4, 10 * 4];
 // the side-length of a cube in voxels
@@ -108,7 +108,7 @@ function lodOfSector(sector)
 {
     const [x, y, z] = sectorLocation(sector).flat();
     const center = Math.floor(HORIZON_SIZE / 2);
-    const dist = Math.min(2, Math.max(Math.abs(x - center), Math.abs(y - center), Math.abs(z - center)));
+    const dist = Math.max(Math.abs(x - center), Math.abs(y - center), Math.abs(z - center));
 
     return DISTANCE_LODS[dist];
 }
@@ -689,7 +689,7 @@ class World extends core.Object
             priv.sectorMap[entry.sector].address *= -1;
             //priv.sectorMap[entry.sector].address -= 1;
             const sectorData = this.generateSector(entry.sector, entry.loc, entry.lod);
-            console.log("Generated sector " + entry.sector + ", offset: " + sectorData.offset + ", size: " + sectorData.data.length);
+            console.log("Generated sector " + entry.sector + ", LOD: " + entry.lod + ", offset: " + sectorData.offset + ", size: " + sectorData.data.length);
            
             uploadLinearData(canvas, sectorData.offset, sectorData.data);
 
