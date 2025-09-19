@@ -353,7 +353,7 @@ uint voxelType(WorldLocator worldLoc)
     uint sectorOffset = sectorDataOffset(worldLoc.cube.sector);
     if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
-        debug = 2;
+        //debug = 2;
         return 0u;
     }
     uint cubeOffset = sectorOffset + cubeDataOffset(worldLoc.cube);
@@ -1241,7 +1241,7 @@ bool hasVoxelAt(vec3 p)
     uint sectorOffset = sectorDataOffset(cube.sector);
     if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
-        debug = 2;
+        //debug = 2;
         return false;
     }
     uint offset = sectorOffset + cubeDataOffset(cube);
@@ -1259,7 +1259,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
         // this sector is empty
-        debug = 2;
+        //debug = 2;
         return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
     uint offset = sectorOffset + cubeDataOffset(cube);

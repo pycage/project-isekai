@@ -426,13 +426,14 @@ Document {
                 if (sector !== world.centerSector)
                 {
                     console.log("Entered sector " + sector);
-                    const now = Date.now();
                     const sectorDist = world.sectorDistance(sector);
                     console.log("SECTOR DIST: " + JSON.stringify(sectorDist));
                     universeLocation = mat.add(universeLocation, sectorDist);
 
                     // reset camera location (the camera must move in the opposite direction to stay put)
                     cameraLocation = mat.add(cameraLocation, mat.mul(sectorDist, -64));
+
+                    const now = Date.now();
                     world.updateHorizon(universeLocation, canvas);
                     console.log("Shifting sectors took " + (Date.now() - now) + "ms");
 

@@ -47,6 +47,13 @@ function writeArrayAt(arr, pos, valueArr)
     }
 }
 
+function locEqual(a, b)
+{
+    return a[0][0] == b[0][0] &&
+           a[1][0] == b[1][0] &&
+           a[2][0] == b[2][0];
+}
+
 function uniteRanges(ranges)
 {
     let result = [];
@@ -592,16 +599,20 @@ class World extends core.Object
         this.uploadData(canvas, true);
 
         // make a deep copy
+        let now = Date.now();
         const sectorMap = priv.sectorMap.map(entry =>
         {
-            return { address: entry.address, uloc: mat.vec(...entry.uloc.flat()) };
+            return { address: entry.address, uloc: entry.uloc.slice() }; //mat.vec(...entry.uloc.flat()) };
         });
+        console.log("Making deep copy took " + (Date.now() - now) + "ms");
 
         console.log("Updating horizon around: " + JSON.stringify(universeLocation));
         const halfSize = Math.floor(HORIZON_SIZE / 2);
         const requiredSectors = [];
         const freedAddressesPerLod = [[], [], [], [], []];
 
+        // find the sectors that are required
+        now = Date.now();
         for (let y = 0; y < HORIZON_SIZE; ++y)
         {
             for (let z = 0; z < HORIZON_SIZE; ++z)
@@ -618,31 +629,37 @@ class World extends core.Object
                 }
             }
         }
+        console.log("Getting required sectors took " + (Date.now() - now) + "ms");
 
-        // collect the addresses that became free
+        // collect the addresses that became free (those that already are in the sector map
+        // and will just be moved)
+        now = Date.now();
         for (let i = 0; i < priv.sectorMap.length; ++i)
         {
             const lod = lodOfSector(i);
-            const uloc = priv.sectorMap[i].uloc;
-            const idx = requiredSectors.findIndex(s => "" + s.loc === "" + uloc && s.lod === lod);
+            const loc = priv.sectorMap[i].uloc;
+            const idx = requiredSectors.findIndex(s => locEqual(s.loc, loc) && s.lod === lod);
             if (idx === -1)
             {
+                // already have this universe location at this LOD
                 // this address is free
                 freedAddressesPerLod[lod].push(priv.sectorMap[i].address);
             }
         }
+        console.log("Collecting free addresses took " + (Date.now() - now) + "ms");
 
         //console.log(JSON.stringify(freedAddressesPerLod));
         //console.log(freedAddressesPerLod[0].length);
         //console.log(JSON.stringify(priv.sectorMap));
 
         // either move or create the sectors
-        let dataRanges = [];
+        now = Date.now();
         for (let i = 0; i < requiredSectors.length; ++i)
         {
             const entry = requiredSectors[i];
 
-            const idx = sectorMap.findIndex((s, idx) => idx !== entry.sector && "" + s.uloc === "" + entry.loc && lodOfSector(idx) === entry.lod);
+            const loc = entry.loc;
+            const idx = sectorMap.findIndex((s, idx) => idx !== entry.sector && locEqual(s.uloc, loc) && lodOfSector(idx) === entry.lod);
             if (idx === -1)
             {
                 // this is a new entry
@@ -660,15 +677,25 @@ class World extends core.Object
                 priv.sectorMap[entry.sector].address = sectorMap[idx].address;
             }
         }
+        console.log("Moving/creating sectors took " + (Date.now() - now) + "ms");
+
+        now = Date.now();
+        const center = Math.floor(HORIZON_SIZE / 2);
+        priv.updateQueue.sort((a, b) =>
+        {
+            const [x1, y1, z1] = a.loc.flat();
+            const [x2, y2, z2] = b.loc.flat();
+            const dist1 = Math.max(Math.abs(x1 - center), Math.abs(y1 - center), Math.abs(z1 - center));
+            const dist2 = Math.max(Math.abs(x2 - center), Math.abs(y2 - center), Math.abs(z2 - center));
+
+            return dist1 - dist2;
+        });
+        console.log("Sorting update queue by distance took " + (Date.now() - now) + "ms");
                
         //console.log("AFTER: " + JSON.stringify(freedAddressesPerLod));
         //console.log(JSON.stringify(priv.sectorMap.map((m, idx) => [idx, m])));
         
         this.uploadData(canvas, false);
-
-        // write sector map
-        //this.writeSectorMap();
-        //canvas.updateSampler("worldData", 0, 4095, 4096, 1, priv.worldData.subarray(4095 * 4096 * 4));
     }
 
     uploadData(canvas, flush)
@@ -689,8 +716,8 @@ class World extends core.Object
             priv.sectorMap[entry.sector].address *= -1;
             //priv.sectorMap[entry.sector].address -= 1;
             const sectorData = this.generateSector(entry.sector, entry.loc, entry.lod);
-            console.log("Generated sector " + entry.sector + ", LOD: " + entry.lod + ", offset: " + sectorData.offset + ", size: " + sectorData.data.length);
-           
+            //console.log("Generated sector " + entry.sector + ", LOD: " + entry.lod + ", offset: " + sectorData.offset + ", size: " + sectorData.data.length);
+
             uploadLinearData(canvas, sectorData.offset, sectorData.data);
 
             duration += Date.now() - now;
@@ -704,7 +731,7 @@ class World extends core.Object
 
         this.writeSectorMap();
         uploadLinearData(canvas, 4095 * 4096 * 4, priv.worldData.subarray(4095 * 4096 * 4));
-        console.log("Uploaded " + count + " sectors in " + (Date.now() - now) + "ms");
+        //console.log("Uploaded " + count + " sectors in " + (Date.now() - now) + "ms");
     }
 
     writeSectorMap()
