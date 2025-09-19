@@ -1255,6 +1255,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     WorldLocator noObject;
 
     uint sectorOffset = sectorDataOffset(cube.sector);
+    int lod = lodOfSector(cube.sector);
     if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
         // this sector is empty
@@ -1264,13 +1265,13 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     uint offset = sectorOffset + cubeDataOffset(cube);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
     
-    vec3 exitPoint = entryPoint + rayDirection * 8.0; //hitCubeAabb(entryPoint, rayDirection, vec3(cube.x, cube.y, cube.z)).g;
+    vec3 exitPoint = entryPoint + rayDirection * 8.0;
 
     mat4 m = cubeTrafoInverse(cube);
     vec3 entryPointT = (m * vec4(entryPoint, 1.0)).xyz;
     vec3 exitPointT = (m * vec4(exitPoint, 1.0)).xyz;
 
-    if (! mayHitVoxels(entryPointT, exitPointT, patternAndAddress.rg, lodOfSector(cube.sector)))
+    if (! mayHitVoxels(entryPointT, exitPointT, patternAndAddress.rg, lod))
     {
         ++skipCount;
         return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
@@ -1278,18 +1279,12 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
 
     vec3 p = entryPoint;
     vec3 pT = entryPointT;
-
-    if (pT.x < 0.0 || pT.y < 0.0 || pT.z < 0.0 ||
-        pT.x >= 4.0 || pT.y >= 4.0 || pT.z >= 4.0)
-    {
-        // entry point is out of bounds
-        return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
-    }
+    vec3 probePoint = pT;
 
     const float gridSize = 1.0;
 
-    ObjectLocator objLoc = makeObjectLocator(pT);
-    if (cubeHasVoxel(objLoc, patternAndAddress.rg, lodOfSector(cube.sector)))
+    ObjectLocator objLoc = makeObjectLocator(probePoint);
+    if (cubeHasVoxel(objLoc, patternAndAddress.rg, lod))
     {
         WorldLocator obj = makeWorldLocator(cube, objLoc);
         return ObjectAndDistance(obj, distance(origin, p), p, transformPoint(p, obj));
@@ -1352,23 +1347,26 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         ) * gridSize;
 
         distsOnGrid += abs(advanceVec);
-        vec3 epsilon = advanceVec * 0.0001;
+        probePoint += advanceVec;
 
         // be sure to take only one of the rayLengths
         p = entryPoint + rayDirection * ((advanceX ? rayLengths.x : 0.0) +
                                          (advanceY ? rayLengths.y : 0.0) +
-                                         (advanceZ ? rayLengths.z : 0.0)) + epsilon;
+                                         (advanceZ ? rayLengths.z : 0.0));
 
-        vec3 pT = (m * vec4(p, 1.0)).xyz;
-        if (pT.x < 0.0 || pT.y < 0.0 || pT.z < 0.0 ||
-            pT.x >= 4.0 || pT.y >= 4.0 || pT.z >= 4.0)
+        if (rayDirectionSigns.x < 0.0 && probePoint.x < 0.0 ||
+            rayDirectionSigns.y < 0.0 && probePoint.y < 0.0 ||
+            rayDirectionSigns.z < 0.0 && probePoint.z < 0.0 ||
+            rayDirectionSigns.x > 0.0 && probePoint.x >= 4.0 ||
+            rayDirectionSigns.y > 0.0 && probePoint.y >= 4.0 ||
+            rayDirectionSigns.z > 0.0 && probePoint.z >= 4.0)
         {
             // leaving the cube
             break;
         }
 
-        ObjectLocator objLoc = makeObjectLocator(pT);
-        if (cubeHasVoxel(objLoc, patternAndAddress.rg, lodOfSector(cube.sector)))
+        ObjectLocator objLoc = makeObjectLocator(probePoint);
+        if (cubeHasVoxel(objLoc, patternAndAddress.rg, lod))
         {
             WorldLocator obj = makeWorldLocator(cube, objLoc);
             return ObjectAndDistance(obj, distance(origin, p), p, transformPoint(p, obj));
@@ -1389,8 +1387,9 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
     float maxDistanceSquared = maxDistance * maxDistance;
     const float gridSize = 4.0;
     vec3 p = origin;
+    vec3 probePoint = origin;
 
-    CubeLocator originCube = makeSuperCubeLocator(p, 0);
+    CubeLocator originCube = makeSuperCubeLocator(probePoint, 0);
     result = raymarchVoxels(originCube, origin, p, rayDirection);
     if (result.distance < 9999.0)
     {
@@ -1459,25 +1458,31 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
         ) * gridSize;
 
         distsOnGrid += abs(advanceVec);
-
-        vec3 epsilon = advanceVec * 0.0001;
+        probePoint += advanceVec;
 
         // be sure to take only one of the rayLengths
         p = origin + rayDirection * ((advanceX ? rayLengths.x : 0.0) +
                                      (advanceY ? rayLengths.y : 0.0) +
-                                     (advanceZ ? rayLengths.z : 0.0)) + epsilon;
+                                     (advanceZ ? rayLengths.z : 0.0));
 
-        if (p.x < 0.0 || p.y < 0.0 || p.z < 0.0 ||
-            p.x >= float(sectorSize * cubeSize * horizonSize) ||
-            p.y >= float(sectorSize * cubeSize * horizonSize) ||
-            p.z >= float(sectorSize * cubeSize * horizonSize) ||
-            squaredDist(p, origin) > maxDistanceSquared)
+        if (probePoint.x < 0.0 || probePoint.y < 0.0 || probePoint.z < 0.0 ||
+            probePoint.x >= float(sectorSize * cubeSize * horizonSize) ||
+            probePoint.y >= float(sectorSize * cubeSize * horizonSize) ||
+            probePoint.z >= float(sectorSize * cubeSize * horizonSize) ||
+            squaredDist(probePoint, origin) > maxDistanceSquared)
         {
-            // out of view
+            // out of range
             break;
         }
 
-        CubeLocator cube = makeSuperCubeLocator(p, 0);
+        // clamp point to within the cube
+        vec3 probePointFloored = floor(probePoint / float(cubeSize)) * float(cubeSize);
+        p = vec3(
+            clamp(p.x, probePointFloored.x, probePointFloored.x + 3.9999),
+            clamp(p.y, probePointFloored.y, probePointFloored.y + 3.9999),
+            clamp(p.z, probePointFloored.z, probePointFloored.z + 3.9999)
+        );
+        CubeLocator cube = makeSuperCubeLocator(probePoint, 0);
         result = raymarchVoxels(cube, origin, p, rayDirection);
         if (result.distance < 9999.0)
         {
