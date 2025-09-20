@@ -392,7 +392,7 @@ Document {
             property resolution: qualitySelector.selection
 
             //property universeLocation: mat.vec(-7, 0, -42)
-            property universeLocation: mat.vec(14, 5, 13)
+            property universeLocation: mat.vec(14, 7, 13)
             property cameraLocation: mat.vec(7.1 + 104, 32.1 + 64, 7.1 + 104)
             property cameraRotationY: 0
             property cameraRotationZ: 0

@@ -4,18 +4,20 @@ const sdf = await shRequire("./sdf.js");
 const terrain = await shRequire("./wasm/terrain.wasm");
 
 // the side-length of the horizon cube in sectors (must be odd so there is a center)
-const HORIZON_SIZE = 9;
+const HORIZON_SIZE = 13;
 
-const VOXEL_DATA_OFFSET = 16 * 16 * 16;
-const CUBE_VOXEL_STRIDE = 4 * 4 * 4;
-
-const DISTANCE_LODS = [0, 0, 1, 2, 2, 2];
+const DISTANCE_LODS = [0, 0, 1, 1, 2, 3, 4, 5];
 // the data stride of a sector
-const LOD_SECTOR_STRIDE = [69632 * 4, 12288 * 4, 5120 * 4, 320 * 4, 80 * 4, 10 * 4];
+const LOD_SECTOR_STRIDE = [69632 * 4, 12288 * 4, 5120 * 4, 640 * 4, 80 * 4, 10 * 4];
 // the side-length of a cube in voxels
-const LOD_CUBE_SIZE =   [ 4,  2,  1, 1, 1];
+const LOD_CUBE_SIZE =   [ 4,  2,  1, 1, 1, 1, 1];
 // the side-length of a sector in cubes
-const LOD_SECTOR_SIZE = [16, 16, 16, 8, 4];
+const LOD_SECTOR_SIZE = [16, 16, 16, 8, 4, 2, 1];
+// the division factor from nominal voxels to LOD voxels
+const LOD_CUBE_DIV = [1, 2, 4, 4, 4, 4, 4];
+// the division factor from nominal cubes to LOD cubes
+const LOD_SECTOR_DIV = [1, 1, 1, 2, 4, 8, 16];
+
 const INVALID_SECTOR_ADDRESS = 1;
 
 function readUint32Array(ptr, memory)
@@ -52,41 +54,6 @@ function locEqual(a, b)
     return a[0][0] == b[0][0] &&
            a[1][0] == b[1][0] &&
            a[2][0] == b[2][0];
-}
-
-function uniteRanges(ranges)
-{
-    let result = [];
-    for (let i = 0; i < ranges.length; ++i)
-    {
-        const [begin, end] = ranges[i];
-
-        let haveIntersections = false;
-
-        // remove all ranges that lie between begin and end
-        result = result.filter(r => r[0] < begin || r[1] > end)
-                       .map(r =>
-        {
-            if (end >= r[0] && begin <= r[1])
-            {
-                // intersection
-                haveIntersections = true;
-                return [Math.min(r[0], begin), Math.max(r[1], end)];
-            }
-            else
-            {
-                return r;
-            }
-        });
-
-        if (! haveIntersections)
-        {
-            // add, if no intersections where found
-            result.push([begin, end]);
-        }
-    }
-
-    return result;
 }
 
 /* Returns the sector index at the given horizon cube coordinates.
@@ -239,7 +206,7 @@ class World extends core.Object
         d.set(this, {
             worldData: new Uint32Array(4096 * 4096 * 4),
             updateQueue: [],
-            sectorMap: [ ],  // array of { address, universeLocation }
+            sectorMap: [],  // array of { address, universeLocation }
             centerSector: makeSectorIndex(horizonCenter, horizonCenter, horizonCenter)
         });
 
@@ -257,7 +224,7 @@ class World extends core.Object
         const priv = d.get(this);
 
         // count the sectors per LOD
-        let lodSectorCounts = [0, 0, 0, 0, 0];
+        let lodSectorCounts = [0, 0, 0, 0, 0, 0, 0];
         for (let i = 0; i < HORIZON_SIZE * HORIZON_SIZE * HORIZON_SIZE; ++i)
         {
             const lod = lodOfSector(i);
@@ -271,7 +238,9 @@ class World extends core.Object
             lodSectorCounts[1] * LOD_SECTOR_STRIDE[1],
             lodSectorCounts[2] * LOD_SECTOR_STRIDE[2],
             lodSectorCounts[3] * LOD_SECTOR_STRIDE[3],
-            lodSectorCounts[4] * LOD_SECTOR_STRIDE[4]
+            lodSectorCounts[4] * LOD_SECTOR_STRIDE[4],
+            lodSectorCounts[5] * LOD_SECTOR_STRIDE[5],
+            lodSectorCounts[6] * LOD_SECTOR_STRIDE[6]
         ];
         const lodSlotOffsets = [0];
         let offset = 0;
@@ -282,7 +251,7 @@ class World extends core.Object
         }
         console.log("LOD slot offsets: " + JSON.stringify(lodSlotOffsets));
 
-        lodSectorCounts = [0, 0, 0, 0, 0];
+        lodSectorCounts = [0, 0, 0, 0, 0, 0, 0];
         for (let i = 0; i < HORIZON_SIZE * HORIZON_SIZE * HORIZON_SIZE; ++i)
         {
             const lod = lodOfSector(i);
@@ -320,22 +289,13 @@ class World extends core.Object
     /* Returns the offset into the cube voxel data for the given address, relative to the
      * sector offset;
      */
-    voxelDataOffset(address)
+    voxelDataOffset(address, lod)
     {
-        return VOXEL_DATA_OFFSET + address * CUBE_VOXEL_STRIDE;
-    }
+        const sectorSize = LOD_SECTOR_SIZE[lod];
+        const cubeSize = LOD_CUBE_SIZE[lod];
 
-    cubeIndex(cube)
-    {
-        const lod = lodOfSector(cube.sector);
-        const sectorLod = Math.max(0, lod - 2);
-        const sectorSizeWithLod = LOD_SECTOR_SIZE[lod];
-
-        const cx = Math.floor(cube.x / (1 << sectorLod));
-        const cy = Math.floor(cube.y / (1 << sectorLod));
-        const cz = Math.floor(cube.z / (1 << sectorLod));
-
-        return cx * sectorSizeWithLod * sectorSizeWithLod + cy * sectorSizeWithLod + cz;
+        return sectorSize * sectorSize * sectorSize * 4 +
+               address * cubeSize * cubeSize * cubeSize;
     }
 
     /* Returns the sector at the given world location.
@@ -394,7 +354,8 @@ class World extends core.Object
      */
     cubesOnRay(origin, rayDirection)
     {
-        const cubeSize = LOD_CUBE_SIZE[0];
+        // FIXME: unused
+        const nominalCubeSize = LOD_CUBE_SIZE[0];
 
         const cubes = [];
 
@@ -404,33 +365,33 @@ class World extends core.Object
 
         //console.log("ray: " + rayDirection.flat().map(c => c.toFixed(2)));
 
-        const scaleX = rayDirection[0][0] != 0.0 ? cubeSize / Math.abs(rayDirection[0][0]) : 9999999.0;
-        const scaleY = rayDirection[1][0] != 0.0 ? cubeSize / Math.abs(rayDirection[1][0]) : 9999999.0;
-        const scaleZ = rayDirection[2][0] != 0.0 ? cubeSize / Math.abs(rayDirection[2][0]) : 9999999.0;
+        const scaleX = rayDirection[0][0] != 0.0 ? nominalCubeSize / Math.abs(rayDirection[0][0]) : 9999999.0;
+        const scaleY = rayDirection[1][0] != 0.0 ? nominalCubeSize / Math.abs(rayDirection[1][0]) : 9999999.0;
+        const scaleZ = rayDirection[2][0] != 0.0 ? nominalCubeSize / Math.abs(rayDirection[2][0]) : 9999999.0;
 
         //console.log("scale: " + mat.vec(scaleX, scaleY, scaleZ).flat().map(c => c.toFixed(2)));
 
-        let gridX = cubeSize * Math.floor((p[0][0]) / cubeSize);
-        let gridY = cubeSize * Math.floor((p[1][0]) / cubeSize);
-        let gridZ = cubeSize * Math.floor((p[2][0]) / cubeSize);
+        let gridX = nominalCubeSize * Math.floor((p[0][0]) / nominalCubeSize);
+        let gridY = nominalCubeSize * Math.floor((p[1][0]) / nominalCubeSize);
+        let gridZ = nominalCubeSize * Math.floor((p[2][0]) / nominalCubeSize);
 
         if (rayDirection[0][0] > 0.0)
         {
-            gridX += cubeSize;
+            gridX += nominalCubeSize;
         }
         if (rayDirection[1][0] > 0.0)
         {
-            gridY += cubeSize;
+            gridY += nominalCubeSize;
         }
         if (rayDirection[2][0] > 0.0)
         {
-            gridZ += cubeSize;
+            gridZ += nominalCubeSize;
         }
         //console.log("grid: " + mat.vec(gridX, gridY, gridZ).flat().map(c => c.toFixed(2)));
 
-        let distX = Math.abs(gridX - p[0][0]) / cubeSize;
-        let distY = Math.abs(gridY - p[1][0]) / cubeSize;
-        let distZ = Math.abs(gridZ - p[2][0]) / cubeSize;
+        let distX = Math.abs(gridX - p[0][0]) / nominalCubeSize;
+        let distY = Math.abs(gridY - p[1][0]) / nominalCubeSize;
+        let distZ = Math.abs(gridZ - p[2][0]) / nominalCubeSize;
 
         //console.log("dist: " + mat.vec(distX, distY, distZ).flat().map(c => c.toFixed(2)));
 
@@ -447,21 +408,21 @@ class World extends core.Object
             let newOrigin = origin;
             if (rayLengthX <= rayLengthY && rayLengthX <= rayLengthZ)
             {
-                moveX = Math.sign(rayDirection[0][0]) * cubeSize;
+                moveX = Math.sign(rayDirection[0][0]) * nominalCubeSize;
                 distX += 1.0;
                 //console.log("rayLength " + rayLengthX);
                 newOrigin = mat.add(origin, mat.mul(rayDirection, rayLengthX));
             }
             else if (rayLengthY <= rayLengthX && rayLengthY <= rayLengthZ)
             {
-                moveY = Math.sign(rayDirection[1][0]) * cubeSize;
+                moveY = Math.sign(rayDirection[1][0]) * nominalCubeSize;
                 distY += 1.0;
                 //console.log("rayLength " + rayLengthY);
                 newOrigin = mat.add(origin, mat.mul(rayDirection, rayLengthY));
             }
             else if (rayLengthZ <= rayLengthX && rayLengthZ <= rayLengthY)
             {
-                moveZ = Math.sign(rayDirection[2][0]) * cubeSize;
+                moveZ = Math.sign(rayDirection[2][0]) * nominalCubeSize;
                 distZ += 1.0;
                 //console.log("rayLength " + rayLengthZ);
                 newOrigin = mat.add(origin, mat.mul(rayDirection, rayLengthZ));
@@ -481,35 +442,42 @@ class World extends core.Object
         return cubes;
     }
 
-    /* Returns the list of objects in the given cube.
+    /* Returns the list of voxels in the given cube.
      */
-    objectsInCube(cube)
+    voxelsInCube(cube)
     {
         const priv = d.get(this);
 
         const lod = lodOfSector(cube.sector);
-        const cubeLod = Math.min(lod, 2);
-        const bitsPerCoord = 2 / (1 << cubeLod);
-        
-        const cubeIndex = this.cubeIndex(cube);
+        const nominalCubeSize = LOD_CUBE_SIZE[0];
+        const sectorSize = LOD_SECTOR_SIZE[lod];
+        const cubeSize = LOD_CUBE_SIZE[lod];
+        const bitsPerCoord = cubeSize == 4 ? 2 : 1;
+
+        const cubeX = Math.floor(cube.x / LOD_SECTOR_DIV[lod]);
+        const cubeY = Math.floor(cube.y / LOD_SECTOR_DIV[lod]);
+        const cubeZ = Math.floor(cube.z / LOD_SECTOR_DIV[lod]);
+        const cubeIndex = cubeX * sectorSize * sectorSize +
+                          cubeY * sectorSize +
+                          cubeZ;
         const sectorOffset = this.sectorDataOffset(cube.sector);
         const cubeOffset = sectorOffset + this.cubeDataOffset(cubeIndex);
         let patternHi = priv.worldData[cubeOffset];
         let patternLo = priv.worldData[cubeOffset + 1];
         const address = priv.worldData[cubeOffset + 2];
 
-        const voxelOffset = this.voxelDataOffset(address);
+        const voxelOffset = this.voxelDataOffset(address, lod);
 
         let objects = [];
-        for (let x = 0; x < 4; ++x)
+        for (let x = 0; x < nominalCubeSize; ++x)
         {
-            for (let y = 0; y < 4; ++y)
+            for (let y = 0; y < nominalCubeSize; ++y)
             {
-                for (let z = 0; z < 4; ++z)
+                for (let z = 0; z < nominalCubeSize; ++z)
                 {
-                    const lx = x / (1 << cubeLod);
-                    const ly = y / (1 << cubeLod);
-                    const lz = z / (1 << cubeLod);
+                    const lx = Math.floor(x / LOD_CUBE_DIV[lod]);
+                    const ly = Math.floor(y / LOD_CUBE_DIV[lod]);
+                    const lz = Math.floor(z / LOD_CUBE_DIV[lod]);
 
                     const idx = (lx << (bitsPerCoord + bitsPerCoord)) +
                                 (ly << bitsPerCoord) +
@@ -552,7 +520,7 @@ class World extends core.Object
         const cube = this.cubeOf(p);
         const cm = this.cubeTrafoInverse(cube);
 
-        const hits = this.objectsInCube(cube).map(obj =>
+        const hits = this.voxelsInCube(cube).map(obj =>
         {
             const pT = mat.swizzle(mat.mul(mat.mul(cm, obj.trafoInverse), mat.vec(p, 1.0)), "xyz");
             return sdf.sdfBox(pT);
@@ -609,7 +577,7 @@ class World extends core.Object
         console.log("Updating horizon around: " + JSON.stringify(universeLocation));
         const halfSize = Math.floor(HORIZON_SIZE / 2);
         const requiredSectors = [];
-        const freedAddressesPerLod = [[], [], [], [], []];
+        const freedAddressesPerLod = [[], [], [], [], [], []];
 
         // find the sectors that are required
         now = Date.now();
@@ -723,7 +691,7 @@ class World extends core.Object
             duration += Date.now() - now;
             ++count;
 
-            if (! flush && duration > 10)
+            if (! flush && duration > 10 && entry.lod > 1)
             {
                 break;
             }

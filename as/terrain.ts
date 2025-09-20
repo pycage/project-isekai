@@ -1,7 +1,7 @@
 import { mandelbrot } from  "./mandelbrot.ts";
 
-const LOD_CUBE_SIZE: i32[] =   [ 4,  2,  1, 1, 1];
-const LOD_SECTOR_SIZE: i32[] = [16, 16, 16, 8, 4];
+const LOD_CUBE_SIZE: i32[] =   [ 4,  2,  1, 1, 1, 1, 1];
+const LOD_SECTOR_SIZE: i32[] = [16, 16, 16, 8, 4, 2, 1];
 
 /*
 function cellularNoise2D(px, py, size)
@@ -40,11 +40,9 @@ function cellularNoise2D(px, py, size)
 
 function setVoxel(data: Uint32Array, type: i32, x: i32, y: i32, z: i32, lod: i32): void
 {
-    const cubeLod: i32 = min(lod, 2);
-    const sectorLod: i32 = max(0, lod - 2);
     const cubeSize: i32 = LOD_CUBE_SIZE[lod];
     const sectorSize: i32 = LOD_SECTOR_SIZE[lod];
-    const bitsPerCoord: i32 = cubeLod == 0 ? 2 : 1;
+    const bitsPerCoord: i32 = lod == 0 ? 2 : 1;
     const cubeCount: i32 = sectorSize * sectorSize * sectorSize;
     const voxelCount: i32 = cubeSize * cubeSize * cubeSize;
 
@@ -62,7 +60,7 @@ function setVoxel(data: Uint32Array, type: i32, x: i32, y: i32, z: i32, lod: i32
     let patternLo: u32 = <u32> data[offset + 1];
     const address: i32 = cubeIndex;
 
-    if (cubeLod < 2)
+    if (cubeSize > 1)
     {
         const voxelIndex = ((x - cubeX * cubeSize) << (bitsPerCoord + bitsPerCoord)) +
                            ((y - cubeY * cubeSize) << bitsPerCoord) +
@@ -147,7 +145,7 @@ export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Uint32Array
                 }
 
                 // fill valleys with water
-                if (worldY < 2)
+                if (worldY < 4)
                 {
                     setVoxel(data, 1, col, layer, row, lod);
                 }
