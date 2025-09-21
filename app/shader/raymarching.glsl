@@ -1810,8 +1810,8 @@ SurfaceNormal computeNormalVector(vec3 origin, vec3 rayDirection, ObjectAndDista
 
 vec3 computeLighting(vec3 origin, vec3 rayDirection, ObjectAndDistance obj, SurfaceNormal surfaceNormal)
 {
-    vec3 ambience = vec3(0.2) * (enableAmbientOcclusion ? ambientOcclusion(obj.p, obj.object, createSurfaceTrafo(surfaceNormal.straight), 0.1)
-                                                        : 1.0);
+    vec3 ambience = vec3(0.2) * (enableAmbientOcclusion && obj.distance < 100.0 ? ambientOcclusion(obj.p, obj.object, createSurfaceTrafo(surfaceNormal.straight), 0.1)
+                                                                                : 1.0);
 
     vec3 light = phongShading(origin, obj.p, ambience, surfaceNormal.bump, 1.0);
 
