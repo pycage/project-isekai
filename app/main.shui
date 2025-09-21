@@ -185,6 +185,36 @@ Document {
                 return;
             }
 
+            if (hasButton("dpadUp"))
+            {
+                if (hasButton("look"))
+                {
+                    controls.lookDown();
+                }
+                else
+                {
+                    controls.forward(hasButton("run") ? 3 : 1);
+                }
+            }
+            if (hasButton("dpadDown"))
+            {
+                if (hasButton("look"))
+                {
+                    controls.lookUp();
+                }
+                else
+                {
+                    controls.backward(hasButton("run") ? 3 : 1);
+                }
+            }
+            if (hasButton("dpadLeft"))
+            {
+                controls.rotateLeft();
+            }
+            if (hasButton("dpadRight"))
+            {
+                controls.rotateRight();
+            }
             if (hasButton("strafeLeft"))
             {
                 controls.left(hasButton("run") ? 3 : 1);
