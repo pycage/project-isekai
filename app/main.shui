@@ -464,7 +464,7 @@ Document {
                     cameraLocation = mat.add(cameraLocation, mat.mul(sectorDist, -64));
 
                     const now = Date.now();
-                    world.updateHorizon(universeLocation, canvas);
+                    world.updateHorizon(universeLocation, canvas.cameraDirection, canvas);
                     console.log("Shifting sectors took " + (Date.now() - now) + "ms");
 
                     // reposition global lights
@@ -553,7 +553,7 @@ Document {
                 console.log("Creating world...");
                 setSampler("worldData", 4096, 4096, world.worldData, { data: true });
 
-                world.updateHorizon(universeLocation, canvas);
+                world.updateHorizon(universeLocation, cameraDirection, canvas);
                 world.uploadData(canvas, true);
 
                 console.log("Creating textures...");

@@ -559,7 +559,7 @@ class World extends core.Object
 
     /* Updates the horizon cube around the given universe location.
      */
-    updateHorizon(universeLocation, canvas)
+    updateHorizon(universeLocation, viewingDirection, canvas)
     {
         const priv = d.get(this);
 
@@ -651,6 +651,10 @@ class World extends core.Object
         const center = Math.floor(HORIZON_SIZE / 2);
         priv.updateQueue.sort((a, b) =>
         {
+            const aDot = mat.dot(viewingDirection, a.loc);
+            const bDot = mat.dot(viewingDirection, b.loc);
+            if (aDot < 0.0) return 1;
+            if (bDot < 0.0) return -1;
             const [x1, y1, z1] = a.loc.flat();
             const [x2, y2, z2] = b.loc.flat();
             const dist1 = Math.max(Math.abs(x1 - center), Math.abs(y1 - center), Math.abs(z1 - center));
@@ -688,7 +692,7 @@ class World extends core.Object
 
             uploadLinearData(canvas, sectorData.offset, sectorData.data);
 
-            duration += Date.now() - now;
+            duration = Date.now() - now;
             ++count;
 
             if (! flush && duration > 10 && entry.lod > 1)
@@ -699,7 +703,7 @@ class World extends core.Object
 
         this.writeSectorMap();
         uploadLinearData(canvas, 4095 * 4096 * 4, priv.worldData.subarray(4095 * 4096 * 4));
-        //console.log("Uploaded " + count + " sectors in " + (Date.now() - now) + "ms");
+        console.log("Uploaded " + count + " sectors in " + (Date.now() - now) + "ms");
     }
 
     writeSectorMap()
