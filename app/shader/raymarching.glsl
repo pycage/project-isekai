@@ -46,6 +46,12 @@ uniform usampler2D worldData;
 uniform sampler2D lightsData;
 uniform sampler2D tasmData;
 
+struct SectorMapEntry
+{
+    uint address;
+    int lod;
+};
+
 struct CubeLocator
 {
     int x;
@@ -186,14 +192,6 @@ ivec2 textureAddress(uint address)
     );
 }
 
-/* Maps a sector number to the physical address according to the
- * sector mapping table.
- */
-int mapSector(int sector)
-{
-    return int(texelFetch(worldData, ivec2(sector / 4, worldPageSize - 1), 0)[sector % 4]);
-}
-
 ivec3 sectorLocation(int sector)
 {
     int y = sector / (horizonSize * horizonSize);
@@ -297,9 +295,13 @@ mat4 cubeTrafoInverse(CubeLocator cube)
 
 /* Returns the data offset for the given sector.
  */
-uint sectorDataOffset(int sector)
+SectorMapEntry sectorDataOffset(int sector)
 {
-    return uint(mapSector(sector));
+    int value = int(texelFetch(worldData, ivec2(sector / 4, worldPageSize - 1), 0)[sector % 4]);
+    return SectorMapEntry(
+        uint(value >> 3),
+        value & 7
+    );
 }
 
 /* Returns the data offset for the given cube within a sector.
@@ -348,10 +350,10 @@ uint voxelType(WorldLocator worldLoc)
     loc /= LOD_CUBE_DIV[lod];
     loc /= LOD_SECTOR_DIV[lod];
 
-    uint sectorOffset = sectorDataOffset(worldLoc.cube.sector);
+    uint sectorOffset = sectorDataOffset(worldLoc.cube.sector).address;
     if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
-        debug = 2;
+        //debug = 2;
         return 0u;
     }
     uint cubeOffset = sectorOffset + cubeDataOffset(worldLoc.cube);
@@ -1236,10 +1238,10 @@ bool hasVoxelAt(vec3 p)
     vec3 pT = (m * vec4(p, 1.0)).xyz;
     ObjectLocator objLoc = makeObjectLocator(pT);
 
-    uint sectorOffset = sectorDataOffset(cube.sector);
+    uint sectorOffset = sectorDataOffset(cube.sector).address;
     if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
-        debug = 2;
+        //debug = 2;
         return false;
     }
     uint offset = sectorOffset + cubeDataOffset(cube);
@@ -1252,12 +1254,12 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
 {
     WorldLocator noObject;
 
-    uint sectorOffset = sectorDataOffset(cube.sector);
+    uint sectorOffset = sectorDataOffset(cube.sector).address;
     int lod = lodOfSector(cube.sector);
     if (sectorOffset == INVALID_SECTOR_ADDRESS)
     {
         // this sector is empty
-        debug = 2;
+        //debug = 2;
         return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
     uint offset = sectorOffset + cubeDataOffset(cube);

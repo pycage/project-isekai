@@ -259,7 +259,7 @@ class World extends core.Object
             //console.log("Sector " + i + " -> LOD " + lod + " idx " + sectorLodIdx);
             ++lodSectorCounts[lod];
             const physicalAddress = lodSlotOffsets[lod] + sectorLodIdx * LOD_SECTOR_STRIDE[lod];
-            priv.sectorMap.push({ address: physicalAddress, uloc: mat.vec(0, 0, 0) });
+            priv.sectorMap.push({ address: physicalAddress, uloc: mat.vec(0, 0, 0), lod: lod });
         }
 
         this.writeSectorMap();
@@ -570,7 +570,7 @@ class World extends core.Object
         let now = Date.now();
         const sectorMap = priv.sectorMap.map(entry =>
         {
-            return { address: entry.address, uloc: entry.uloc.slice() }; //mat.vec(...entry.uloc.flat()) };
+            return { address: entry.address, uloc: entry.uloc.slice(), lod: entry.lod }; //mat.vec(...entry.uloc.flat()) };
         });
         console.log("Making deep copy took " + (Date.now() - now) + "ms");
 
@@ -634,6 +634,7 @@ class World extends core.Object
                 //console.log("New Entry, sector: " + entry.sector + ", uloc: " + entry.loc);
                 priv.sectorMap[entry.sector].uloc = entry.loc;
                 priv.sectorMap[entry.sector].address = freedAddressesPerLod[entry.lod].shift() * -1 /* mark as empty until uploaded */;
+                priv.sectorMap[entry.sector].lod = entry.lod;
                 //console.log("use free address: " + sectorMap[entry.sector].address);
                 priv.updateQueue.push(entry);
             }
@@ -643,6 +644,7 @@ class World extends core.Object
                 //console.log("Move Entry, sector: " + idx + " -> " + entry.sector);
                 priv.sectorMap[entry.sector].uloc = sectorMap[idx].uloc;
                 priv.sectorMap[entry.sector].address = sectorMap[idx].address;
+                priv.sectorMap[entry.sector].lod = entry.lod;
             }
         }
         console.log("Moving/creating sectors took " + (Date.now() - now) + "ms");
@@ -709,8 +711,13 @@ class World extends core.Object
     writeSectorMap()
     {
         const priv = d.get(this);
-        // divide address by 4 to get pixel address
-        const data = priv.sectorMap.map(s => s.address < 0 ? INVALID_SECTOR_ADDRESS : (s.address >> 2));
+        const data = priv.sectorMap.map(s =>
+        {
+            // divide address by 4 to get pixel address
+            const addr = s.address < 0 ? INVALID_SECTOR_ADDRESS : s.address >> 2;
+            //console.log("Sector Map: " + addr + " LOD " + s.lod);
+            return (addr << 3) + s.lod;
+        });
         //console.log("Write Sector Map: " + JSON.stringify(data));
         writeArrayAt(priv.worldData, 4096 * 4 * 4095, data);
     }
