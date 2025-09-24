@@ -207,7 +207,8 @@ class World extends core.Object
             worldData: new Uint32Array(4096 * 4096 * 4),
             updateQueue: [],
             sectorMap: [],  // array of { address, universeLocation }
-            centerSector: makeSectorIndex(horizonCenter, horizonCenter, horizonCenter)
+            centerSector: makeSectorIndex(horizonCenter, horizonCenter, horizonCenter),
+            freedAddressesPerLod: [[], [], [], [], [], []]
         });
 
         this.initializeSectorMap();
@@ -217,6 +218,20 @@ class World extends core.Object
     get sectorMap() { return d.get(this).sectorMap.map(s => s.address); }
     get centerSector() { return d.get(this).centerSector; }
 
+    /* Releases a sector address for a LOD.
+     */
+    releaseSectorAddress(lod, address)
+    {
+        d.get(this).freedAddressesPerLod[lod].push(address);
+    }
+
+    /* Allocates a free sector address for a LOD.
+     */
+    allocateSectorAddress(lod)
+    {
+        return d.get(this).freedAddressesPerLod[lod].pop();
+    }
+
     /* Initializes the sector map.
      */
     initializeSectorMap()
@@ -224,12 +239,15 @@ class World extends core.Object
         const priv = d.get(this);
 
         // count the sectors per LOD
-        let lodSectorCounts = [0, 0, 0, 0, 0, 0, 0];
+        let lodSectorCounts = [0, 0, 0, 0, 0, 0];
         for (let i = 0; i < HORIZON_SIZE * HORIZON_SIZE * HORIZON_SIZE; ++i)
         {
             const lod = lodOfSector(i);
             ++lodSectorCounts[lod];
         }
+        // add some sectors for buffer
+        lodSectorCounts = lodSectorCounts.map(c => Math.ceil(c * 1.5));
+
         console.log("LOD sector counts: " + JSON.stringify(lodSectorCounts));
 
         // compute the LOD address offsets
@@ -239,8 +257,7 @@ class World extends core.Object
             lodSectorCounts[2] * LOD_SECTOR_STRIDE[2],
             lodSectorCounts[3] * LOD_SECTOR_STRIDE[3],
             lodSectorCounts[4] * LOD_SECTOR_STRIDE[4],
-            lodSectorCounts[5] * LOD_SECTOR_STRIDE[5],
-            lodSectorCounts[6] * LOD_SECTOR_STRIDE[6]
+            lodSectorCounts[5] * LOD_SECTOR_STRIDE[5]
         ];
         const lodSlotOffsets = [0];
         let offset = 0;
@@ -251,14 +268,21 @@ class World extends core.Object
         }
         console.log("LOD slot offsets: " + JSON.stringify(lodSlotOffsets));
 
-        lodSectorCounts = [0, 0, 0, 0, 0, 0, 0];
+        // create the slots
+        for (let lod = 0; lod < lodSectorCounts.length; ++lod)
+        {
+            const lodCount = lodSectorCounts[lod];
+            for (let i = 0; i < lodCount; ++i)
+            {
+                const physicalAddress = lodSlotOffsets[lod] + i * LOD_SECTOR_STRIDE[lod];
+                priv.freedAddressesPerLod[lod].push(physicalAddress);
+            }
+        }
+
         for (let i = 0; i < HORIZON_SIZE * HORIZON_SIZE * HORIZON_SIZE; ++i)
         {
             const lod = lodOfSector(i);
-            const sectorLodIdx = lodSectorCounts[lod];
-            //console.log("Sector " + i + " -> LOD " + lod + " idx " + sectorLodIdx);
-            ++lodSectorCounts[lod];
-            const physicalAddress = lodSlotOffsets[lod] + sectorLodIdx * LOD_SECTOR_STRIDE[lod];
+            const physicalAddress = this.allocateSectorAddress(lod);
             priv.sectorMap.push({ address: physicalAddress, uloc: mat.vec(0, 0, 0), lod: lod });
         }
 
@@ -577,7 +601,6 @@ class World extends core.Object
         console.log("Updating horizon around: " + JSON.stringify(universeLocation));
         const halfSize = Math.floor(HORIZON_SIZE / 2);
         const requiredSectors = [];
-        const freedAddressesPerLod = [[], [], [], [], [], []];
 
         // find the sectors that are required
         now = Date.now();
@@ -611,13 +634,11 @@ class World extends core.Object
             {
                 // already have this universe location at this LOD
                 // this address is free
-                freedAddressesPerLod[lod].push(priv.sectorMap[i].address);
+                this.releaseSectorAddress(lod, priv.sectorMap[i].address);
             }
         }
         console.log("Collecting free addresses took " + (Date.now() - now) + "ms");
 
-        //console.log(JSON.stringify(freedAddressesPerLod));
-        //console.log(freedAddressesPerLod[0].length);
         //console.log(JSON.stringify(priv.sectorMap));
 
         // either move or create the sectors
@@ -633,7 +654,7 @@ class World extends core.Object
                 // this is a new entry
                 //console.log("New Entry, sector: " + entry.sector + ", uloc: " + entry.loc);
                 priv.sectorMap[entry.sector].uloc = entry.loc;
-                priv.sectorMap[entry.sector].address = freedAddressesPerLod[entry.lod].shift() * -1 /* mark as empty until uploaded */;
+                priv.sectorMap[entry.sector].address = this.allocateSectorAddress(entry.lod) * -1 /* mark as empty until uploaded */;
                 priv.sectorMap[entry.sector].lod = entry.lod;
                 //console.log("use free address: " + sectorMap[entry.sector].address);
                 priv.updateQueue.push(entry);
@@ -666,7 +687,6 @@ class World extends core.Object
         });
         console.log("Sorting update queue by distance took " + (Date.now() - now) + "ms");
                
-        //console.log("AFTER: " + JSON.stringify(freedAddressesPerLod));
         //console.log(JSON.stringify(priv.sectorMap.map((m, idx) => [idx, m])));
         
         this.uploadData(canvas, false);
@@ -715,10 +735,8 @@ class World extends core.Object
         {
             // divide address by 4 to get pixel address
             const addr = s.address < 0 ? INVALID_SECTOR_ADDRESS : s.address >> 2;
-            //console.log("Sector Map: " + addr + " LOD " + s.lod);
             return (addr << 3) + s.lod;
         });
-        //console.log("Write Sector Map: " + JSON.stringify(data));
         writeArrayAt(priv.worldData, 4096 * 4 * 4095, data);
     }
 };
