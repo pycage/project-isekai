@@ -7,7 +7,6 @@ precision highp usampler2D;
 const int horizonSize = 13;
 const int worldPageSize = 4096;
 
-const int[8] DISTANCE_LODS = int[](0, 0, 1, 1, 2, 3, 4, 5);
 // the side-length of a cube in voxels
 const int[7] LOD_CUBE_SIZE =   int[]( 4,  2,  1, 1, 1, 1, 1);
 // the side-length of a sector in cubes
@@ -201,17 +200,6 @@ ivec3 sectorLocation(int sector)
     return ivec3(x, y, z);
 }
 
-/* Returns the level-of-detail for the given sector number.
- */
-int lodOfSector(int sector)
-{
-    ivec3 v = sectorLocation(sector);
-    int center = horizonSize / 2;
-    int dist = max(max(abs(v.x - center), abs(v.y - center)), abs(v.z - center));
-
-    return DISTANCE_LODS[dist];
-}
-
 vec3 resolveCubeLocator(CubeLocator cube)
 {
     const int sectorSize = LOD_SECTOR_SIZE[0];
@@ -306,9 +294,8 @@ SectorMapEntry sectorDataOffset(int sector)
 
 /* Returns the data offset for the given cube within a sector.
  */
-uint cubeDataOffset(CubeLocator cube)
+uint cubeDataOffset(CubeLocator cube, int lod)
 {
-    int lod = lodOfSector(cube.sector);
     int sectorSize = LOD_SECTOR_SIZE[lod];
 
     ivec3 cubeLoc = ivec3(cube.x, cube.y, cube.z);
@@ -342,7 +329,14 @@ uint voxelDataOffset(uint address, int lod)
 
 uint voxelType(WorldLocator worldLoc)
 {
-    int lod = lodOfSector(worldLoc.cube.sector);
+    SectorMapEntry sectorMapEntry = sectorDataOffset(worldLoc.cube.sector);
+    if (sectorMapEntry.address == INVALID_SECTOR_ADDRESS)
+    {
+        //debug = 2;
+        return 0u;
+    }
+
+    int lod = sectorMapEntry.lod;
     int cubeSize = LOD_CUBE_SIZE[lod];
     int sectorSize = LOD_SECTOR_SIZE[lod];
 
@@ -350,13 +344,7 @@ uint voxelType(WorldLocator worldLoc)
     loc /= LOD_CUBE_DIV[lod];
     loc /= LOD_SECTOR_DIV[lod];
 
-    SectorMapEntry sectorMapEntry = sectorDataOffset(worldLoc.cube.sector);
-    if (sectorMapEntry.address == INVALID_SECTOR_ADDRESS)
-    {
-        //debug = 2;
-        return 0u;
-    }
-    uint cubeOffset = sectorMapEntry.address + cubeDataOffset(worldLoc.cube);
+    uint cubeOffset = sectorMapEntry.address + cubeDataOffset(worldLoc.cube, sectorMapEntry.lod);
     uint address = texelFetch(worldData, textureAddress(cubeOffset), 0).b;
 
     if (cubeSize > 1)
@@ -1244,10 +1232,10 @@ bool hasVoxelAt(vec3 p)
         //debug = 2;
         return false;
     }
-    uint offset = sectorMapEntry.address + cubeDataOffset(cube);
+    uint offset = sectorMapEntry.address + cubeDataOffset(cube, sectorMapEntry.lod);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
 
-    return cubeHasVoxel(objLoc, patternAndAddress.rg, lodOfSector(cube.sector));
+    return cubeHasVoxel(objLoc, patternAndAddress.rg, sectorMapEntry.lod);
 }
 
 ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint, vec3 rayDirection)
@@ -1255,14 +1243,14 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     WorldLocator noObject;
 
     SectorMapEntry sectorMapEntry = sectorDataOffset(cube.sector);
-    int lod = lodOfSector(cube.sector);
+    int lod = sectorMapEntry.lod;
     if (sectorMapEntry.address == INVALID_SECTOR_ADDRESS)
     {
         // this sector is empty
         //debug = 2;
         return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
-    uint offset = sectorMapEntry.address + cubeDataOffset(cube);
+    uint offset = sectorMapEntry.address + cubeDataOffset(cube, sectorMapEntry.lod);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
     
     vec3 exitPoint = entryPoint + rayDirection * 8.0;
