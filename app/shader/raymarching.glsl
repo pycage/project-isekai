@@ -350,13 +350,13 @@ uint voxelType(WorldLocator worldLoc)
     loc /= LOD_CUBE_DIV[lod];
     loc /= LOD_SECTOR_DIV[lod];
 
-    uint sectorOffset = sectorDataOffset(worldLoc.cube.sector).address;
-    if (sectorOffset == INVALID_SECTOR_ADDRESS)
+    SectorMapEntry sectorMapEntry = sectorDataOffset(worldLoc.cube.sector);
+    if (sectorMapEntry.address == INVALID_SECTOR_ADDRESS)
     {
         //debug = 2;
         return 0u;
     }
-    uint cubeOffset = sectorOffset + cubeDataOffset(worldLoc.cube);
+    uint cubeOffset = sectorMapEntry.address + cubeDataOffset(worldLoc.cube);
     uint address = texelFetch(worldData, textureAddress(cubeOffset), 0).b;
 
     if (cubeSize > 1)
@@ -365,13 +365,13 @@ uint voxelType(WorldLocator worldLoc)
         int voxelIndex = (loc.x << (bitsPerCoord + bitsPerCoord)) +
                          (loc.y << bitsPerCoord) +
                          loc.z;
-        uint voxelOffset = sectorOffset + voxelDataOffset(address, lod);
+        uint voxelOffset = sectorMapEntry.address + voxelDataOffset(address, lod);
 
         return texelFetch(worldData, textureAddress(voxelOffset + uint(voxelIndex / 4)), 0)[voxelIndex % 4];
     }
     else
     {
-        uint voxelOffset = sectorOffset + voxelDataOffset(address, lod);
+        uint voxelOffset = sectorMapEntry.address + voxelDataOffset(address, lod);
         return texelFetch(worldData, textureAddress(voxelOffset), 0)[address % 4u];
     }
 }
@@ -1238,13 +1238,13 @@ bool hasVoxelAt(vec3 p)
     vec3 pT = (m * vec4(p, 1.0)).xyz;
     ObjectLocator objLoc = makeObjectLocator(pT);
 
-    uint sectorOffset = sectorDataOffset(cube.sector).address;
-    if (sectorOffset == INVALID_SECTOR_ADDRESS)
+    SectorMapEntry sectorMapEntry = sectorDataOffset(cube.sector);
+    if (sectorMapEntry.address == INVALID_SECTOR_ADDRESS)
     {
         //debug = 2;
         return false;
     }
-    uint offset = sectorOffset + cubeDataOffset(cube);
+    uint offset = sectorMapEntry.address + cubeDataOffset(cube);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
 
     return cubeHasVoxel(objLoc, patternAndAddress.rg, lodOfSector(cube.sector));
@@ -1254,15 +1254,15 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
 {
     WorldLocator noObject;
 
-    uint sectorOffset = sectorDataOffset(cube.sector).address;
+    SectorMapEntry sectorMapEntry = sectorDataOffset(cube.sector);
     int lod = lodOfSector(cube.sector);
-    if (sectorOffset == INVALID_SECTOR_ADDRESS)
+    if (sectorMapEntry.address == INVALID_SECTOR_ADDRESS)
     {
         // this sector is empty
         //debug = 2;
         return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
     }
-    uint offset = sectorOffset + cubeDataOffset(cube);
+    uint offset = sectorMapEntry.address + cubeDataOffset(cube);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
     
     vec3 exitPoint = entryPoint + rayDirection * 8.0;
