@@ -281,7 +281,7 @@ class World extends core.Object
 
         for (let i = 0; i < HORIZON_SIZE * HORIZON_SIZE * HORIZON_SIZE; ++i)
         {
-            const lod = lodOfSector(i);
+            const lod = 5;
             const physicalAddress = this.allocateSectorAddress(lod);
             priv.sectorMap.push({ address: physicalAddress, uloc: mat.vec(0, 0, 0), lod: lod });
         }
@@ -472,7 +472,7 @@ class World extends core.Object
     {
         const priv = d.get(this);
 
-        const lod = lodOfSector(cube.sector);
+        const lod = priv.sectorMap[cube.sector].lod;
         const nominalCubeSize = LOD_CUBE_SIZE[0];
         const sectorSize = LOD_SECTOR_SIZE[lod];
         const cubeSize = LOD_CUBE_SIZE[lod];
@@ -622,18 +622,17 @@ class World extends core.Object
         }
         console.log("Getting required sectors took " + (Date.now() - now) + "ms");
 
-        // collect the addresses that became free (those that already are in the sector map
-        // and will just be moved)
+        // collect the addresses that became free
         now = Date.now();
         for (let i = 0; i < priv.sectorMap.length; ++i)
         {
-            const lod = lodOfSector(i);
+            const lod = priv.sectorMap[i].lod;
             const loc = priv.sectorMap[i].uloc;
             const idx = requiredSectors.findIndex(s => locEqual(s.loc, loc) && s.lod === lod);
             if (idx === -1)
             {
-                // already have this universe location at this LOD
-                // this address is free
+                // this address is free, because it doesn't move from one
+                // sector to another
                 this.releaseSectorAddress(lod, priv.sectorMap[i].address);
             }
         }
@@ -648,21 +647,17 @@ class World extends core.Object
             const entry = requiredSectors[i];
 
             const loc = entry.loc;
-            const idx = sectorMap.findIndex((s, idx) => idx !== entry.sector && locEqual(s.uloc, loc) && lodOfSector(idx) === entry.lod);
+            const idx = sectorMap.findIndex(s => locEqual(s.uloc, loc) && s.lod === entry.lod);
             if (idx === -1)
             {
                 // this is a new entry
                 //console.log("New Entry, sector: " + entry.sector + ", uloc: " + entry.loc);
-                priv.sectorMap[entry.sector].uloc = entry.loc;
-                priv.sectorMap[entry.sector].address = this.allocateSectorAddress(entry.lod) * -1 /* mark as empty until uploaded */;
-                priv.sectorMap[entry.sector].lod = entry.lod;
-                //console.log("use free address: " + sectorMap[entry.sector].address);
+                priv.sectorMap[entry.sector].address = -1;
                 priv.updateQueue.push(entry);
             }
             else
             {
                 // move entry
-                //console.log("Move Entry, sector: " + idx + " -> " + entry.sector);
                 priv.sectorMap[entry.sector].uloc = sectorMap[idx].uloc;
                 priv.sectorMap[entry.sector].address = sectorMap[idx].address;
                 priv.sectorMap[entry.sector].lod = entry.lod;
@@ -707,8 +702,11 @@ class World extends core.Object
         while (priv.updateQueue.length > 0)
         {
             const entry = priv.updateQueue.shift();
-            priv.sectorMap[entry.sector].address *= -1;
-            //priv.sectorMap[entry.sector].address -= 1;
+
+            priv.sectorMap[entry.sector].uloc = entry.loc;
+            priv.sectorMap[entry.sector].address = this.allocateSectorAddress(entry.lod);
+            priv.sectorMap[entry.sector].lod = entry.lod;
+
             const sectorData = this.generateSector(entry.sector, entry.loc, entry.lod);
             //console.log("Generated sector " + entry.sector + ", LOD: " + entry.lod + ", offset: " + sectorData.offset + ", size: " + sectorData.data.length);
 
