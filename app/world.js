@@ -6,7 +6,7 @@ const terrain = await shRequire("./wasm/terrain.wasm");
 // the side-length of the horizon cube in sectors (must be odd so there is a center)
 const HORIZON_SIZE = 13;
 
-const DISTANCE_LODS = [0, 0, 1, 1, 2, 3, 4, 5];
+const DISTANCE_LODS = [0, 0, 1, 2, 2, 3, 3, 3];
 // the data stride of a sector
 const LOD_SECTOR_STRIDE = [69632 * 4, 12288 * 4, 5120 * 4, 640 * 4, 80 * 4, 10 * 4];
 // the side-length of a cube in voxels

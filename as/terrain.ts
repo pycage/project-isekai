@@ -145,7 +145,7 @@ export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Uint32Array
                 }
 
                 // fill valleys with water
-                if (worldY < 4)
+                if (worldY < 16)
                 {
                     setVoxel(data, 1, col, layer, row, lod);
                 }
