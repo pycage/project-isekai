@@ -468,7 +468,11 @@ Document {
                     console.log("Shifting sectors took " + (Date.now() - now) + "ms");
 
                     // reposition global lights
-                    setLight(doc.lights, 0, mat.add(mat.mul(universeLocation, 64), mat.vec(30.0, 500.0, 30.0)), mat.vec(1.0, 1.0, 1.0), 30000.0);
+                    setLight(doc.lights,
+                             0,
+                             mat.sub(mat.vec(30.0, 500.0, 30.0), mat.mul(universeLocation, 64)),
+                             mat.vec(1.0, 1.0, 1.0),
+                             30000.0);
                     setSampler("lightsData", 64, 64, doc.lights, { data: true });
                 }
             }
