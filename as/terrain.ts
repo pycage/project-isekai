@@ -133,7 +133,7 @@ export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Uint32Array
                 if (worldY < height)
                 {
                     let type: i32 = 2; // grass
-                    if (worldY < 8)
+                    if (worldY < 17)
                     {
                         type = 3; // sand
                     }
