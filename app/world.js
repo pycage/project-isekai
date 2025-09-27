@@ -294,7 +294,7 @@ class World extends core.Object
         this.writeSectorMap();
     }
 
-    /* Maps a sector to its actual physical location.
+    /* Maps a sector to its actual physical address.
      */
     mapSector(sector)
     {
@@ -339,6 +339,13 @@ class World extends core.Object
         const z = Math.floor(v[2][0]);
 
         return makeSectorIndex(x, y, z);
+    }
+
+    /* Returns the world location of the given sector.
+     */
+    sectorWorldLocation(sector)
+    {
+        return mat.mul(sectorLocation(sector), LOD_SECTOR_SIZE[0] * LOD_CUBE_SIZE[0]);
     }
 
     /* Returns the distance from the horizon cube center to the given sector.

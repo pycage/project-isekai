@@ -422,8 +422,8 @@ Document {
             property resolution: qualitySelector.selection
 
             //property universeLocation: mat.vec(-7, 0, -42)
-            property universeLocation: mat.vec(14, 7, 13)
-            property cameraLocation: mat.vec(7.1 + 104, 32.1 + 64, 7.1 + 104)
+            property universeLocation: mat.vec(14, 3, 13)
+            property cameraLocation: mat.add(world.sectorWorldLocation(world.centerSector), mat.vec(32, 32, 32)) //  mat.vec(7.1 + 104, 32.1 + 64, 7.1 + 104)
             property cameraRotationY: 0
             property cameraRotationZ: 0
             property cameraDirection: mat.swizzle(mat.mul(mat.rotationM(mat.vec(1, 0, 0, 0), mat.vec(0, 0, 1, 0), cameraRotationY), mat.vec(0, 0, 1, 1)), "xyz")
@@ -995,7 +995,7 @@ Document {
             canvas.setUniform("int", "tracingDepth", Math.floor(tracingDepthSlider.seekValue));
             canvas.setUniform("int", "enableOutlines", outlinesCheckBox.checked);
             canvas.setUniform("mat4", "cameraTrafo", cameraTrafo);
-            canvas.setUniform("vec3", "universeLocation", mat.sub(canvas.universeLocation, mat.vec(128, 128, 128)));
+            canvas.setUniform("vec3", "universeLocation", canvas.universeLocation);
             
             world.uploadData(canvas, false);
 
