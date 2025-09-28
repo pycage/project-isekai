@@ -51,9 +51,9 @@ function writeArrayAt(arr, pos, valueArr)
 
 function locEqual(a, b)
 {
-    return a[0][0] == b[0][0] &&
-           a[1][0] == b[1][0] &&
-           a[2][0] == b[2][0];
+    return a[0][0] === b[0][0] &&
+           a[1][0] === b[1][0] &&
+           a[2][0] === b[2][0];
 }
 
 /* Returns the sector index at the given horizon cube coordinates.
@@ -606,7 +606,7 @@ class World extends core.Object
         let now = Date.now();
         const sectorMap = priv.sectorMap.map(entry =>
         {
-            return { address: entry.address, uloc: entry.uloc.slice(), lod: entry.lod }; //mat.vec(...entry.uloc.flat()) };
+            return { address: entry.address, uloc: entry.uloc.slice(), lod: entry.lod };
         });
         console.log("Making deep copy took " + (Date.now() - now) + "ms");
 
@@ -636,31 +636,25 @@ class World extends core.Object
 
         // collect the addresses that became free
         now = Date.now();
-        for (let i = 0; i < priv.sectorMap.length; ++i)
+        priv.sectorMap.forEach(entry =>
         {
-            const lod = priv.sectorMap[i].lod;
-            const loc = priv.sectorMap[i].uloc;
-            const idx = requiredSectors.findIndex(s => locEqual(s.loc, loc));
+            const idx = requiredSectors.findIndex(s => locEqual(s.loc, entry.uloc));
             if (idx === -1)
             {
                 // this address is free, because it doesn't move from one
                 // sector to another
-                this.releaseSectorAddress(lod, priv.sectorMap[i].address);
-                priv.sectorMap[i].address = -1;
+                this.releaseSectorAddress(entry.lod, entry.address);
             }
-        }
+        });
         console.log("Collecting free addresses took " + (Date.now() - now) + "ms");
 
         //console.log(JSON.stringify(priv.sectorMap));
 
         // either move or create the sectors
         now = Date.now();
-        for (let i = 0; i < requiredSectors.length; ++i)
+        requiredSectors.forEach(entry =>
         {
-            const entry = requiredSectors[i];
-
-            const loc = entry.loc;
-            const idx = sectorMap.findIndex(s => locEqual(s.uloc, loc));
+            const idx = sectorMap.findIndex(s => locEqual(s.uloc, entry.loc));
             if (idx === -1)
             {
                 // this is a new entry
@@ -671,9 +665,7 @@ class World extends core.Object
             else
             {
                 // move entry
-                priv.sectorMap[entry.sector].uloc = sectorMap[idx].uloc;
-                priv.sectorMap[entry.sector].address = sectorMap[idx].address;
-                priv.sectorMap[entry.sector].lod = sectorMap[idx].lod;
+                priv.sectorMap[entry.sector] = sectorMap[idx];
 
                 // update LOD
                 if (entry.lod !== priv.sectorMap[entry.sector].lod)
@@ -682,7 +674,7 @@ class World extends core.Object
                     priv.updateQueue.push(entry);
                 }
             }
-        }
+        });
         console.log("Moving/creating sectors took " + (Date.now() - now) + "ms");
 
         now = Date.now();
