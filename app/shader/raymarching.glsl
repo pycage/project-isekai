@@ -40,7 +40,6 @@ uniform mat4 cameraTrafo;
 uniform float screenWidth;
 uniform float screenHeight;
 
-uniform int numLights;
 uniform usampler2D worldData;
 uniform sampler2D lightsData;
 uniform sampler2D tasmData;
@@ -1499,40 +1498,7 @@ vec4 skyBox(vec3 origin, vec3 rayDirection)
     return vec4(color, 1.0);
 }
 
-vec3 simplePhongShading(vec3 checkPoint)
-{
-    vec3 lighting = vec3(0.0);
-
-    for (int i = 0; i < 3; ++i)
-    {
-        if (i == numLights)
-        {
-            break;
-        }
-
-        vec3 lightLoc = getLightLocation(i);
-        vec3 lightCol = getLightColor(i);
-        float lightRange = getLightRange(i);
-
-        vec3 directionToLight = normalize(lightLoc - checkPoint);
-        float lightDistance = length(checkPoint - lightLoc);
-
-        // light attenuation based on distance and strength of the light source
-        float attenuation = clamp(1.0 - lightDistance / lightRange, 0.0, 1.0);
-        attenuation *= attenuation;
-        vec3 attenuatedLight = lightCol * attenuation;
-
-        // diffuse light
-        float diffuseImpact = 1.0;
-        vec3 diffuse = attenuatedLight * diffuseImpact;
-
-        lighting += diffuse;
-    }
-
-    return lighting.rgb;
-}
-
-vec3 phongShading(vec3 origin, vec3 checkPoint, vec3 ambience, vec3 surfaceNormal, float roughness)
+vec3 phongShading(int lightSource, vec3 origin, vec3 checkPoint, vec3 ambience, vec3 surfaceNormal, float roughness)
 {
     // Phong shading: lighting = ambient + diffuse + specular
     //                color = modelColor * lighting
@@ -1541,62 +1507,55 @@ vec3 phongShading(vec3 origin, vec3 checkPoint, vec3 ambience, vec3 surfaceNorma
     vec3 lighting = ambience;
     float shininess = (1.0 - roughness) * 64.0;
 
-    for (int i = 0; i < 3; ++i)
+    vec3 lightLoc = getLightLocation(lightSource);
+    vec3 lightCol = getLightColor(lightSource);
+    float lightRange = getLightRange(lightSource);
+
+    vec3 directionToLight = normalize(lightLoc - checkPoint);
+    float lightDistance = length(checkPoint - lightLoc);
+
+    float impact = dot(directionToLight, surfaceNormal);
+
+    // does the light reach?
+    if (impact <= 0.001)
     {
-        if (i == numLights)
-        {
-            break;
-        }
-
-        vec3 lightLoc = getLightLocation(i);
-        vec3 lightCol = getLightColor(i);
-        float lightRange = getLightRange(i);
-
-        vec3 directionToLight = normalize(lightLoc - checkPoint);
-        float lightDistance = length(checkPoint - lightLoc);
-
-        float impact = dot(directionToLight, surfaceNormal);
-
-        // does the light reach?
-        if (impact <= 0.001)
+        // nope
+        return lighting;
+    }
+    if (enableShadows)
+    {
+        // we may not have to go all the way to the light to know if it reaches (it may be far far away)
+        float optimizedLightDistance = min(lightDistance, 100.0);
+        ObjectAndDistance hitSample = raymarch(checkPoint + directionToLight * 0.1, directionToLight, optimizedLightDistance);
+        if (hitSample.hit)
         {
             // nope
-            continue;
+            return lighting;
         }
-        if (enableShadows)
-        {
-            // we may not have to go all the way to the light to know if it reaches (it may be far far away)
-            float optimizedLightDistance = min(lightDistance, 100.0);
-            ObjectAndDistance hitSample = raymarch(checkPoint + directionToLight * 0.1, directionToLight, optimizedLightDistance);
-            if (hitSample.hit)
-            {
-                // nope
-                continue;
-            }
-        }
-
-        // light attenuation based on distance and strength of the light source
-        float attenuation = clamp(1.0 - lightDistance / lightRange, 0.0, 1.0);
-        if (i == 0)
-        {
-            // light attenuation based on clouds
-            vec4 skyColor = skyBox(checkPoint, directionToLight);
-            attenuation *= lerp(0.1, 1.0, 1.0 - skyColor.r);
-        }
-
-        attenuation *= attenuation;
-        vec3 attenuatedLight = lightCol * attenuation;
-
-        // diffuse light
-        vec3 diffuse = attenuatedLight * impact;
-
-        // specular highlight (Blinn-Phong)
-        vec3 halfDirection = normalize(directionToLight + viewDirection);
-        float specularStrength = pow(max(0.0, dot(surfaceNormal, halfDirection)), shininess) * 0.5;
-        vec3 specular = attenuatedLight * specularStrength;
-
-        lighting += diffuse + specular;
     }
+
+    // light attenuation based on distance and strength of the light source
+    float attenuation = clamp(1.0 - lightDistance / lightRange, 0.0, 1.0);
+
+    if (lightLoc.y > 1000.0)
+    {
+        // light attenuation based on clouds
+        vec4 skyColor = skyBox(checkPoint, directionToLight);
+        attenuation *= lerp(0.1, 1.0, 1.0 - skyColor.r);
+    }
+
+    attenuation *= attenuation;
+    vec3 attenuatedLight = lightCol * attenuation;
+
+    // diffuse light
+    vec3 diffuse = attenuatedLight * impact;
+
+    // specular highlight (Blinn-Phong)
+    vec3 halfDirection = normalize(directionToLight + viewDirection);
+    float specularStrength = pow(max(0.0, dot(surfaceNormal, halfDirection)), shininess) * 0.5;
+    vec3 specular = attenuatedLight * specularStrength;
+
+    lighting += diffuse + specular;
 
     return lighting.rgb;
 }
@@ -1805,7 +1764,7 @@ vec3 computeLighting(vec3 origin, vec3 rayDirection, ObjectAndDistance obj, Surf
     vec3 ambience = vec3(0.2) * (enableAmbientOcclusion && obj.distance < 100.0 ? ambientOcclusion(obj.p, obj.object, createSurfaceTrafo(surfaceNormal.straight), 0.1)
                                                                                 : 1.0);
 
-    vec3 light = phongShading(origin, obj.p, ambience, surfaceNormal.bump, 1.0);
+    vec3 light = phongShading(0, origin, obj.p, ambience, surfaceNormal.bump, 1.0);
 
     return light;
 }
