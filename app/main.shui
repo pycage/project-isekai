@@ -422,7 +422,7 @@ Document {
             property resolution: qualitySelector.selection
 
             //property universeLocation: mat.vec(-7, 0, -42)
-            property universeLocation: mat.vec(14, 3, 13)
+            property universeLocation: mat.vec(14, 0, 13)
             property cameraLocation: mat.add(world.sectorWorldLocation(world.centerSector), mat.vec(32, 32, 32)) //  mat.vec(7.1 + 104, 32.1 + 64, 7.1 + 104)
             property cameraRotationY: 0
             property cameraRotationZ: 0
@@ -470,7 +470,7 @@ Document {
                     // reposition global lights
                     setLight(doc.lights,
                              0,
-                             mat.sub(mat.vec(30.0, 500.0, 30.0), mat.mul(universeLocation, 64)),
+                             mat.sub(mat.vec(30.0, 5000.0, 30.0), mat.mul(universeLocation, 64)),
                              mat.vec(1.0, 1.0, 1.0),
                              30000.0);
                     setSampler("lightsData", 64, 64, doc.lights, { data: true });

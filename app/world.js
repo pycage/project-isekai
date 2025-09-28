@@ -4,9 +4,9 @@ const sdf = await shRequire("./sdf.js");
 const terrain = await shRequire("./wasm/terrain.wasm");
 
 // the side-length of the horizon cube in sectors (must be odd so there is a center)
-const HORIZON_SIZE = 13;
+const HORIZON_SIZE = 15;
 
-const DISTANCE_LODS = [0, 0, 1, 2, 2, 3, 3, 3];
+const DISTANCE_LODS = [0, 0, 1, 2, 2, 3, 3, 3, 4];
 // the data stride of a sector
 const LOD_SECTOR_STRIDE = [69632 * 4, 12288 * 4, 5120 * 4, 640 * 4, 80 * 4, 10 * 4];
 // the side-length of a cube in voxels

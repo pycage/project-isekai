@@ -4,7 +4,7 @@ precision highp int;    /* Android needs this for sufficient precision */
 precision highp usampler2D;
 
 // world configuration
-const int horizonSize = 13;
+const int horizonSize = 15;
 const int worldPageSize = 4096;
 
 // the side-length of a cube in voxels
@@ -74,6 +74,7 @@ struct WorldLocator
 
 struct ObjectAndDistance
 {
+    bool hit;
     WorldLocator object;
     float distance;
     vec3 p;
@@ -1248,7 +1249,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     {
         // this sector is empty
         //debug = 2;
-        return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
+        return ObjectAndDistance(false, noObject, distance(origin, entryPoint), entryPoint, vec3(0.0));
     }
     uint offset = sectorMapEntry.address + cubeDataOffset(cube, sectorMapEntry.lod);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
@@ -1262,7 +1263,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     if (! mayHitVoxels(entryPointT, exitPointT, patternAndAddress.rg, lod))
     {
         ++skipCount;
-        return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
+        return ObjectAndDistance(false, noObject, distance(origin, entryPoint), entryPoint, vec3(0.0));
     }
 
     vec3 p = entryPoint;
@@ -1270,12 +1271,13 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     vec3 probePoint = pT;
 
     const float gridSize = 1.0;
+    //float gridSize = 1.0 * float(LOD_CUBE_SIZE[0] / LOD_CUBE_SIZE[lod]);
 
     ObjectLocator objLoc = makeObjectLocator(probePoint);
     if (cubeHasVoxel(objLoc, patternAndAddress.rg, lod))
     {
         WorldLocator obj = makeWorldLocator(cube, objLoc);
-        return ObjectAndDistance(obj, distance(origin, p), p, transformPoint(p, obj));
+        return ObjectAndDistance(true, obj, distance(origin, p), p, transformPoint(p, obj));
     }
 
     vec3 invRayDirection = 1.0 / abs(rayDirection);
@@ -1357,11 +1359,11 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         if (cubeHasVoxel(objLoc, patternAndAddress.rg, lod))
         {
             WorldLocator obj = makeWorldLocator(cube, objLoc);
-            return ObjectAndDistance(obj, distance(origin, p), p, transformPoint(p, obj));
+            return ObjectAndDistance(true, obj, distance(origin, p), p, transformPoint(p, obj));
         }
     }
 
-    return ObjectAndDistance(noObject, 9999.0, vec3(0.0), vec3(0.0));
+    return ObjectAndDistance(false, noObject, distance(origin, p), p, vec3(0.0));
 }
 
 ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float maxDistance)
@@ -1373,16 +1375,20 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
     const int cubeSize = LOD_CUBE_SIZE[0];
 
     float maxDistanceSquared = maxDistance * maxDistance;
-    const float gridSize = 4.0;
     vec3 p = origin;
     vec3 probePoint = origin;
 
     CubeLocator originCube = makeSuperCubeLocator(probePoint, 0);
     result = raymarchVoxels(originCube, origin, p, rayDirection);
-    if (result.distance < 9999.0)
+    if (result.hit)
     {
         return result;
     }
+
+    int currentSector = originCube.sector;
+    int lod = sectorDataOffset(currentSector).lod;
+    //const float gridSize = 4.0;
+    float gridSize = lod == 0 ? 4.0 : 4.0 * float(LOD_SECTOR_SIZE[0] / LOD_SECTOR_SIZE[lod - 1]);
 
     vec3 invRayDirection = 1.0 / abs(rayDirection);
     vec3 rayDirectionSigns = sign(rayDirection);
@@ -1411,13 +1417,8 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
     ) * gridSize;
 
     vec3 distsOnGrid = abs(gridPoint - p);
-    for (int i = 0; i < 128; ++i)
+    for (int i = 0; i < 16; ++i)
     {
-        if (i == depth)
-        {
-            break;
-        }
-
         vec3 rayLengths = distsOnGrid * scalingsOnGrid + disabler;
         bool advanceX = rayLengths.x <= rayLengths.y && rayLengths.x <= rayLengths.z;
         bool advanceY = rayLengths.y <= rayLengths.x && rayLengths.y <= rayLengths.z;
@@ -1457,9 +1458,10 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
             probePoint.x >= float(sectorSize * cubeSize * horizonSize) ||
             probePoint.y >= float(sectorSize * cubeSize * horizonSize) ||
             probePoint.z >= float(sectorSize * cubeSize * horizonSize) ||
-            squaredDist(probePoint, origin) > maxDistanceSquared)
+            squaredDist(p, origin) > maxDistanceSquared)
         {
             // out of range
+            //result = ObjectAndDistance(false, noObject, p, vec3(0.0), maxDistance);
             break;
         }
 
@@ -1472,7 +1474,7 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
         );
         CubeLocator cube = makeSuperCubeLocator(probePoint, 0);
         result = raymarchVoxels(cube, origin, p, rayDirection);
-        if (result.distance < 9999.0)
+        if (result.hit)
         {
             break;
         }
@@ -1565,8 +1567,8 @@ vec3 phongShading(vec3 origin, vec3 checkPoint, vec3 ambience, vec3 surfaceNorma
         {
             // we may not have to go all the way to the light to know if it reaches (it may be far far away)
             float optimizedLightDistance = min(lightDistance, 100.0);
-            float travelDist = raymarch(checkPoint + directionToLight * 0.1, directionToLight, optimizedLightDistance).distance;
-            if (travelDist < optimizedLightDistance)
+            ObjectAndDistance hitSample = raymarch(checkPoint + directionToLight * 0.1, directionToLight, optimizedLightDistance);
+            if (hitSample.hit)
             {
                 // nope
                 continue;
@@ -1865,8 +1867,20 @@ mat3 computeRayTracing(vec3 origin, vec3 rayDirection, float distance, SurfaceNo
         }
 
         ObjectAndDistance objAndDistance = raymarch(currentOrigin, rayDirection, 9999.0);
+        /*
+        for (int i = 0; i < 8 && ! objAndDistance.hit; ++i)
+        {
+            if (! objAndDistance.hit)
+            {
+                ObjectAndDistance od2 = raymarch(objAndDistance.p, rayDirection, 9999.0);
+                float totalDistance = objAndDistance.distance + od2.distance;
+                objAndDistance = od2;
+                objAndDistance.distance = totalDistance;
+            }
+        }
+        */
 
-        if (objAndDistance.distance < 9999.0)
+        if (objAndDistance.hit)
         {
             material = computeMaterial(objAndDistance);
             color = material.color;
@@ -1923,13 +1937,24 @@ void main()
     vec3 rayDirection = normalize(screenPoint - origin);
 
     ObjectAndDistance objAndDistance = raymarch(origin, rayDirection, 9999.0);
+    for (int i = 0; i < marchingDepth  && ! objAndDistance.hit; ++i)
+    {
+        if (! objAndDistance.hit)
+        {
+            ObjectAndDistance od2 = raymarch(objAndDistance.p, rayDirection, 9999.0);
+            float totalDistance = objAndDistance.distance + od2.distance;
+            objAndDistance = od2;
+            objAndDistance.distance = totalDistance;
+        }
+    }
+
     if (renderChannel == DEPTH_BUFFER_CHANNEL)
     {
         fragColor = vec4(vec3(min(objAndDistance.distance, 150.0) / 150.0), 1.0);
         return;
     }
 
-    if (objAndDistance.distance > 9990.0)
+    if (! objAndDistance.hit)
     {
         // hit the sky box
         fragColor = vec4(gammaCorrection(skyBox(origin, rayDirection).rgb * exposure), 1.0);
@@ -1988,7 +2013,6 @@ void main()
 
     vec3 composed = enableOutlines && isOutline ? vec3(0.0)
                                                 : gammaCorrection(lighting * color * exposure);
-    
 
     if (debug != 0)
     {
