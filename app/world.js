@@ -56,6 +56,11 @@ function locEqual(a, b)
            a[2][0] === b[2][0];
 }
 
+function locHash(loc)
+{
+  return "" + loc.flat();
+}
+
 /* Returns the sector index at the given horizon cube coordinates.
  */
 function makeSectorIndex(x, y, z)
@@ -600,12 +605,16 @@ class World extends core.Object
         const priv = d.get(this);
 
         // flush pending uploads first
+        let now = Date.now();
         this.uploadData(canvas, true);
+        console.log("Flushing queue took " + (Date.now() - now) + "ms");
 
         // make a deep copy
-        let now = Date.now();
-        const sectorMap = priv.sectorMap.map(entry =>
+        now = Date.now();
+        const sectorMapIndex = new Map();
+        const sectorMap = priv.sectorMap.map((entry, idx) =>
         {
+            sectorMapIndex.set(locHash(entry.uloc), idx);
             return { address: entry.address, uloc: entry.uloc.slice(), lod: entry.lod };
         });
         console.log("Making deep copy took " + (Date.now() - now) + "ms");
@@ -613,6 +622,7 @@ class World extends core.Object
         console.log("Updating horizon around: " + JSON.stringify(universeLocation));
         const halfSize = Math.floor(HORIZON_SIZE / 2);
         const requiredSectors = [];
+        const requiredSectorsIndex = new Map();
 
         // find the sectors that are required
         now = Date.now();
@@ -628,6 +638,7 @@ class World extends core.Object
                         universeLocation,
                         mat.vec(x - halfSize, y - halfSize, z - halfSize)
                     );
+                    requiredSectorsIndex.set(locHash(loc), requiredSectors.length);
                     requiredSectors.push({ sector, loc, lod });
                 }
             }
@@ -638,8 +649,8 @@ class World extends core.Object
         now = Date.now();
         priv.sectorMap.forEach(entry =>
         {
-            const idx = requiredSectors.findIndex(s => locEqual(s.loc, entry.uloc));
-            if (idx === -1)
+            const idx = requiredSectorsIndex.get(locHash(entry.uloc));
+            if (idx === undefined)
             {
                 // this address is free, because it doesn't move from one
                 // sector to another
@@ -654,8 +665,8 @@ class World extends core.Object
         now = Date.now();
         requiredSectors.forEach(entry =>
         {
-            const idx = sectorMap.findIndex(s => locEqual(s.uloc, entry.loc));
-            if (idx === -1)
+            const idx = sectorMapIndex.get(locHash(entry.loc));
+            if (idx === undefined)
             {
                 // this is a new entry
                 //console.log("New Entry, sector: " + entry.sector + ", uloc: " + entry.loc);
@@ -696,7 +707,9 @@ class World extends core.Object
                
         //console.log(JSON.stringify(priv.sectorMap.map((m, idx) => [idx, m])));
         
+        now = Date.now();
         this.uploadData(canvas, false);
+        console.log("Initial upload took " + (Date.now() - now) + "ms");
     }
 
     uploadData(canvas, flush)
@@ -731,7 +744,7 @@ class World extends core.Object
             duration = Date.now() - now;
             ++count;
 
-            if (! flush && duration > 10 && entry.lod > 1)
+            if (! flush && duration > 5)
             {
                 break;
             }
