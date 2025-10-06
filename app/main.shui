@@ -422,7 +422,7 @@ Document {
             property resolution: qualitySelector.selection
 
             //property universeLocation: mat.vec(-7, 0, -42)
-            property universeLocation: mat.vec(14, 0, 13)
+            property universeLocation: mat.vec(14, 1, 13)
             property cameraLocation: mat.add(world.sectorWorldLocation(world.centerSector), mat.vec(32, 32, 32)) //  mat.vec(7.1 + 104, 32.1 + 64, 7.1 + 104)
             property cameraRotationY: 0
             property cameraRotationZ: 0
@@ -715,7 +715,7 @@ Document {
                     "5cm",
                     "1cm"
                 ] }
-                selection: 0
+                selection: 2
             }
         }
 
@@ -749,17 +749,17 @@ Document {
 
             Label {
                 fillWidth: true
-                text: "Ray Tracing Depth: " + Math.floor(tracingDepthSlider.seekValue)
+                text: "Iterations: " + Math.floor(tracingDepthSlider.seekValue)
             }
 
             Slider {
                 id: tracingDepthSlider
 
                 fillWidth: true
-                minValue: 0
-                maxValue: 8
+                minValue: 1
+                maxValue: 16
                 stepSize: 1
-                value: 2
+                value: 8
             }
         }
 

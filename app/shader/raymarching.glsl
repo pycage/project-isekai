@@ -4,8 +4,8 @@ precision highp int;    /* Android needs this for sufficient precision */
 precision highp usampler2D;
 
 // world configuration
-const int horizonSize = 15;
-const int worldPageSize = 4096;
+const int HORIZON_SIZE = 15;
+const int WORLD_PAGE_SIZE = 4096;
 
 // the side-length of a cube in voxels
 const int[7] LOD_CUBE_SIZE =   int[]( 4,  2,  1, 1, 1, 1, 1);
@@ -43,6 +43,21 @@ uniform float screenHeight;
 uniform usampler2D worldData;
 uniform sampler2D lightsData;
 uniform sampler2D tasmData;
+
+struct Channels
+{
+    bool final;
+    bool hit;
+    float totalDistance;
+    vec3 p;
+    vec3 indirectP;
+    vec3 light;
+    vec3 albedo;
+    vec3 surfaceNormal;
+    float roughness;
+    float ior;
+    bool outline;
+};
 
 struct SectorMapEntry
 {
@@ -111,6 +126,8 @@ const int NORMALS_CHANNEL = 2;
 const int LIGHTING_CHANNEL = 3;
 const int COLORS_CHANNEL = 4;
 const int OUTLINES_CHANNEL = 5;
+
+const vec3 DISTANCE_FOG_COLOR = vec3(0.8, 0.8, 0.8);
 
 float[72] tasmRegisters;
 const int REG_VOID = 0;
@@ -186,16 +203,16 @@ float squaredDist(vec3 p1, vec3 p2)
 ivec2 textureAddress(uint address)
 {
     return ivec2(
-        address % uint(worldPageSize),
-        address / uint(worldPageSize)
+        address % uint(WORLD_PAGE_SIZE),
+        address / uint(WORLD_PAGE_SIZE)
     );
 }
 
 ivec3 sectorLocation(int sector)
 {
-    int y = sector / (horizonSize * horizonSize);
-    int z = (sector % (horizonSize * horizonSize)) / horizonSize;
-    int x = sector % horizonSize;
+    int y = sector / (HORIZON_SIZE * HORIZON_SIZE);
+    int z = (sector % (HORIZON_SIZE * HORIZON_SIZE)) / HORIZON_SIZE;
+    int x = sector % HORIZON_SIZE;
 
     return ivec3(x, y, z);
 }
@@ -215,12 +232,12 @@ CubeLocator makeSuperCubeLocator(vec3 v, int level)
 {
     const int sectorSize = LOD_SECTOR_SIZE[0];
     const int cubeSize = LOD_CUBE_SIZE[0];
-    v = clamp(v, 0.0, float(sectorSize * horizonSize * cubeSize - 1));
+    v = clamp(v, 0.0, float(sectorSize * HORIZON_SIZE * cubeSize - 1));
     int superCubeSize = cubeSize << level;
     int sectorLength = sectorSize * superCubeSize;
 
     ivec3 sectorLoc = ivec3(v) / sectorLength;
-    int sector = sectorLoc.y * (horizonSize * horizonSize) + sectorLoc.z * horizonSize + sectorLoc.x;
+    int sector = sectorLoc.y * (HORIZON_SIZE * HORIZON_SIZE) + sectorLoc.z * HORIZON_SIZE + sectorLoc.x;
 
     vec3 t = (v - vec3(sectorLoc * sectorLength)) / float(superCubeSize);
 
@@ -285,7 +302,7 @@ mat4 cubeTrafoInverse(CubeLocator cube)
  */
 SectorMapEntry sectorDataOffset(int sector)
 {
-    int value = int(texelFetch(worldData, ivec2(sector / 4, worldPageSize - 1), 0)[sector % 4]);
+    int value = int(texelFetch(worldData, ivec2(sector / 4, WORLD_PAGE_SIZE - 1), 0)[sector % 4]);
     return SectorMapEntry(
         uint(value >> 3),
         value & 7
@@ -1416,7 +1433,7 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
     ) * gridSize;
 
     vec3 distsOnGrid = abs(gridPoint - p);
-    for (int i = 0; i < 16; ++i)
+    for (int i = 0; i < 32; ++i)
     {
         vec3 rayLengths = distsOnGrid * scalingsOnGrid + disabler;
         bool advanceX = rayLengths.x <= rayLengths.y && rayLengths.x <= rayLengths.z;
@@ -1454,13 +1471,14 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
                                      (advanceZ ? rayLengths.z : 0.0));
 
         if (probePoint.x < 0.0 || probePoint.y < 0.0 || probePoint.z < 0.0 ||
-            probePoint.x >= float(sectorSize * cubeSize * horizonSize) ||
-            probePoint.y >= float(sectorSize * cubeSize * horizonSize) ||
-            probePoint.z >= float(sectorSize * cubeSize * horizonSize) ||
+            probePoint.x >= float(sectorSize * cubeSize * HORIZON_SIZE) ||
+            probePoint.y >= float(sectorSize * cubeSize * HORIZON_SIZE) ||
+            probePoint.z >= float(sectorSize * cubeSize * HORIZON_SIZE) ||
             squaredDist(p, origin) > maxDistanceSquared)
         {
             // out of range
             //result = ObjectAndDistance(false, noObject, p, vec3(0.0), maxDistance);
+            result.p = p;
             break;
         }
 
@@ -1476,6 +1494,10 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
         if (result.hit)
         {
             break;
+        }
+        else
+        {
+            result.p = p;
         }
     }
 
@@ -1493,7 +1515,7 @@ vec4 skyBox(vec3 origin, vec3 rayDirection)
                                                 : origin + rayDirection;
 
     vec3 color = enableTasm && rayDirection.y > 0.0 ? processTasm(0, hitPoint.xz, hitPoint, distance(origin, hitPoint)).color
-                                                    : vec3(0.0);
+                                                    : vec3(0.0, 0.0, 0.0);
 
     return vec4(color, 1.0);
 }
@@ -1769,93 +1791,43 @@ vec3 computeLighting(vec3 origin, vec3 rayDirection, ObjectAndDistance obj, Surf
     return light;
 }
 
-mat3 computeRayTracing(vec3 origin, vec3 rayDirection, float distance, SurfaceNormal surfaceNormal, Material material)
+Channels processChannels(vec3 origin, vec3 rayDirection, Channels channels, bool direct)
 {
-    vec3 currentOrigin = origin + rayDirection * distance;
-    vec3 color = vec3(1.0);
-    vec3 lighting = vec3(1.0);
-
-    bool insideObject = false;
-
-    for (int traceCount = 0; traceCount < 8; ++traceCount)
+    if (channels.final)
     {
-        if (traceCount == tracingDepth)
-        {
-            // tracing depth exceeded
-            break;
-        }
+        return channels;
+    }
 
-        vec3 p = currentOrigin;
+    ObjectAndDistance objAndDistance = raymarch(origin, rayDirection, 9999.0);
+    if (direct)
+    {
+        channels.p = objAndDistance.p;
+        channels.indirectP = objAndDistance.p;
+    }
+    else
+    {
+        channels.indirectP = objAndDistance.p;
+    }
+    channels.totalDistance += objAndDistance.distance;
 
-        if (material.roughness < 1.0)
-        {
-            // we're not finished yet - reflect the ray
-            float fresnel = pow(clamp(1.0 - dot(surfaceNormal.bump, rayDirection * -1.0), 0.5, 1.0), 1.0);
-            lighting += vec3(0.9);
-            lighting *= fresnel * (1.0 - material.roughness);
-            rayDirection = reflect(rayDirection, surfaceNormal.bump);
+    if (objAndDistance.hit)
+    {
+        Material material = computeMaterial(objAndDistance);
+        SurfaceNormal surfaceNormal = computeNormalVector(origin, rayDirection, objAndDistance, material.normal);
+        channels.surfaceNormal = surfaceNormal.bump;
+        channels.roughness = material.roughness;
+        channels.ior = material.ior;
+        channels.albedo = material.color;
+        channels.light = computeLighting(origin, rayDirection, objAndDistance, surfaceNormal);
+        channels.hit = true;
 
-            // epsilon must be small for corners, or you'll get reflected far into another block
-            currentOrigin = p + rayDirection * 0.01;
-
-            if (hasVoxelAt(currentOrigin))
-            {
-                // stuck in an object, not good...
-                break;
-            }
-        }
-        else if (material.ior > 0.1)
+        if (material.roughness > 0.99 && material.ior < 0.01)
         {
-            // we're not finished yet - refract the ray and enter or exit the object
-            vec3 refractedRay = refr(rayDirection, surfaceNormal.bump, material.ior);
-            if (length(refractedRay) < 0.0001)
-            {
-                // total internal reflection
-                rayDirection = normalize(reflect(rayDirection, surfaceNormal.bump));
-            }
-            else
-            {
-                insideObject = ! insideObject;
-                rayDirection = normalize(refractedRay);
-            }
-            currentOrigin = p + rayDirection * 0.01;
-        }
-        else
-        {
-            break;
-        }
-
-        ObjectAndDistance objAndDistance = raymarch(currentOrigin, rayDirection, 9999.0);
-        /*
-        for (int i = 0; i < 8 && ! objAndDistance.hit; ++i)
-        {
-            if (! objAndDistance.hit)
-            {
-                ObjectAndDistance od2 = raymarch(objAndDistance.p, rayDirection, 9999.0);
-                float totalDistance = objAndDistance.distance + od2.distance;
-                objAndDistance = od2;
-                objAndDistance.distance = totalDistance;
-            }
-        }
-        */
-
-        if (objAndDistance.hit)
-        {
-            material = computeMaterial(objAndDistance);
-            color = material.color;
-
-            SurfaceNormal surfaceNormal = computeNormalVector(currentOrigin, rayDirection, objAndDistance, material.normal);
-            lighting *= computeLighting(currentOrigin, rayDirection, objAndDistance, surfaceNormal);
-        }
-        else
-        {
-            // hit the sky box
-            color *= skyBox(currentOrigin, rayDirection).rgb;
-            break;
+            channels.final = true;
         }
     }
 
-    return mat3(color, lighting, vec3(1.0));
+    return channels;
 }
 
 void main()
@@ -1895,89 +1867,124 @@ void main()
     // shoot a ray from the camera onto the near plane (screen)
     vec3 rayDirection = normalize(screenPoint - origin);
 
-    ObjectAndDistance objAndDistance = raymarch(origin, rayDirection, 9999.0);
-    for (int i = 0; i < marchingDepth  && ! objAndDistance.hit; ++i)
+    Channels channels;
+    vec3 currentOrigin = origin;
+
+    channels.albedo = skyBox(currentOrigin, rayDirection).rgb;
+    channels.light = getLightColor(0);
+
+    bool direct = true;
+    for (int i = 0; i < 16; ++i)
     {
-        if (! objAndDistance.hit)
+        if (i >= tracingDepth || channels.final)
         {
-            ObjectAndDistance od2 = raymarch(objAndDistance.p, rayDirection, 9999.0);
-            float totalDistance = objAndDistance.distance + od2.distance;
-            objAndDistance = od2;
-            objAndDistance.distance = totalDistance;
+            break;
+        }
+
+        channels = processChannels(currentOrigin, rayDirection, channels, direct);
+
+        if (! channels.hit)
+        {
+            currentOrigin = channels.indirectP;
+        }
+        else if (channels.roughness < 1.0)
+        {
+            direct = false;
+            rayDirection = reflect(rayDirection, channels.surfaceNormal);
+
+            // epsilon must be small for corners, or you'll get reflected far into another block
+            currentOrigin = channels.indirectP + rayDirection * 0.01;
+            channels.hit = false;
+
+            if (hasVoxelAt(currentOrigin))
+            {
+                // stuck in an object, not good...
+                //debug = 2;
+                // this is a workaround suitable for water...
+                rayDirection.y *= -1.0;
+                currentOrigin = channels.indirectP + rayDirection * 0.01;
+            }
+
+            float fresnel = pow(clamp(1.0 - dot(channels.surfaceNormal, rayDirection * -1.0), 0.5, 1.0), 1.0);
+            channels.albedo = skyBox(currentOrigin, rayDirection).rgb;
+            channels.light = getLightColor(0) * fresnel * (1.0 - channels.roughness);
+        }
+        else if (channels.ior > 0.1)
+        {
+            vec3 refractedRay = refr(rayDirection, channels.surfaceNormal, channels.ior);
+            if (length(refractedRay) < 0.0001)
+            {
+                // total internal reflection
+                rayDirection = normalize(reflect(rayDirection, channels.surfaceNormal));
+            }
+            else
+            {
+                //insideObject = ! insideObject;
+                rayDirection = normalize(refractedRay);
+            }
+            currentOrigin = channels.indirectP + rayDirection * 0.01;
+        }
+        else
+        {
+            break;
         }
     }
-
-    if (renderChannel == DEPTH_BUFFER_CHANNEL)
-    {
-        fragColor = vec4(vec3(min(objAndDistance.distance, 150.0) / 150.0), 1.0);
-        return;
-    }
-
-    if (! objAndDistance.hit)
-    {
-        // hit the sky box
-        fragColor = vec4(gammaCorrection(skyBox(origin, rayDirection).rgb * exposure), 1.0);
-        return;
-    }
-
-    Material material = computeMaterial(objAndDistance);
-    vec3 color = material.color;
-    float reflectivity = 1.0 - material.roughness;
-
-    if (renderChannel == COLORS_CHANNEL)
-    {
-        fragColor = vec4(color, 1.0);
-        return;
-    }
+    channels.outline = freeEdge || aoEdge;
 
     if (tasmProgramTooLong)
     {
         fragColor = vec4(1.0, 0.0, 0.0, 1.0);
-        return;
     }
     else if (tasmStackOutOfBounds)
     {
         fragColor = vec4(1.0, 1.0, 0.0, 1.0);
-        return;
     }
-
-    SurfaceNormal surfaceNormal = computeNormalVector(origin, rayDirection, objAndDistance, material.normal);
-    if (renderChannel == NORMALS_CHANNEL)
-    {
-        fragColor = vec4(vec3(0.5) + surfaceNormal.bump * 0.5, 1.0);
-        return;
-    }
-
-    vec3 lighting = computeLighting(origin, rayDirection, objAndDistance, surfaceNormal);
-    if (renderChannel == LIGHTING_CHANNEL)
-    {
-        fragColor = vec4(lighting, 1.0);
-        return;
-    }
-
-    if (material.roughness < 0.9 || material.ior > 0.1)
-    {
-        mat3 rayTraced = computeRayTracing(origin, rayDirection, objAndDistance.distance, surfaceNormal, material);
-        color *= rayTraced[0];
-        lighting *= rayTraced[1];
-    }
-
-    bool isOutline = freeEdge || aoEdge;
-    if (renderChannel == OUTLINES_CHANNEL)
-    {
-        //fragColor = vec4(vec3(float(skipCount) / 128.0), 1.0);
-        fragColor = vec4(vec3(isOutline ? 0.0 : 1.0), 1.0);
-        return;
-    }
-
-    vec3 composed = enableOutlines && isOutline ? vec3(0.0)
-                                                : gammaCorrection(lighting * color * exposure);
-
-    if (debug != 0)
+    else if (debug != 0)
     {
         fragColor = vec4(1.0, 0.0, 1.0, 1.0);
-        return;
+    }
+    else if (renderChannel == DEPTH_BUFFER_CHANNEL)
+    {
+        float dist = distance(origin, channels.indirectP);
+        float depthLevel = min(dist, 150.0) / 150.0;
+        fragColor = vec4(vec3(depthLevel), 1.0);
+    }
+    else if (renderChannel == NORMALS_CHANNEL)
+    {
+        fragColor = vec4(vec3(0.5) + channels.surfaceNormal * 0.5, 1.0);
+    }
+    else if (renderChannel == OUTLINES_CHANNEL)
+    {
+        //fragColor = vec4(vec3(float(skipCount) / 128.0), 1.0);
+        //fragColor = vec4(vec3(channels.final ? 1.0 : 0.0), 1.0);
+        fragColor = vec4(vec3(channels.outline ? 0.0 : 1.0), 1.0);
+    }
+    else if (renderChannel == LIGHTING_CHANNEL)
+    {
+        fragColor = vec4(channels.light, 1.0);
+    }
+    else if (renderChannel == COLORS_CHANNEL)
+    {
+        fragColor = vec4(channels.albedo, 1.0);
+    }
+    else
+    {
+        vec3 composed = enableOutlines && channels.outline ? vec3(0.0)
+                                                           : (channels.light * channels.albedo);
+
+        // apply distance fog
+        float dist = distance(origin, channels.indirectP);
+        // the lower the y-coordinate, the denser the fog
+        float heightDensity = max(0.0, (600.0 - channels.indirectP.y) / 300.0);
+        float fogDensity = min(1.0, max(0.0, dist - 300.0) * 0.03 * heightDensity);
+        composed = vec3(
+            lerp(composed.r, DISTANCE_FOG_COLOR.r, fogDensity),
+            lerp(composed.g, DISTANCE_FOG_COLOR.g, fogDensity),
+            lerp(composed.b, DISTANCE_FOG_COLOR.b, fogDensity)
+        );
+
+        fragColor = vec4(gammaCorrection(composed * exposure), 1.0);
     }
 
-    fragColor = vec4(composed, 1.0);
 }
+

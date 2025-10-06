@@ -137,7 +137,7 @@ export function generateSector(ux: i32, uy: i32, uz: i32, lod: i32): Uint32Array
                     {
                         type = 3; // sand
                     }
-                    else if (worldY < height - 2)
+                    else if (worldY < height - 2 * (1 << lod))
                     {
                         type = 4; // rocks
                     }
