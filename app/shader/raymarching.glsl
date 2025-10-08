@@ -25,11 +25,9 @@ out vec4 fragColor;
 uniform int timems;
 uniform vec3 universeLocation;
 
-uniform int marchingDepth;
 uniform int tracingDepth;
 
 uniform int renderChannel;
-uniform float fogDensity;
 uniform bool enableShadows;
 uniform bool enableAmbientOcclusion;
 uniform bool enableOutlines;
@@ -197,6 +195,11 @@ float squaredDist(vec3 p1, vec3 p2)
 {
     vec3 diff = p1 - p2;
     return dot(diff, diff);
+}
+
+float fastDistance(vec3 p1, vec3 p2)
+{
+  return fastSqrt(squaredDist(p1, p2));
 }
 
 /* Convers a linear address to a pixel location in the data texture.
@@ -1266,7 +1269,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     {
         // this sector is empty
         //debug = 2;
-        return ObjectAndDistance(false, noObject, distance(origin, entryPoint), entryPoint, vec3(0.0));
+        return ObjectAndDistance(false, noObject, fastDistance(origin, entryPoint), entryPoint, vec3(0.0));
     }
     uint offset = sectorMapEntry.address + cubeDataOffset(cube, sectorMapEntry.lod);
     uvec4 patternAndAddress = texelFetch(worldData, textureAddress(offset), 0);
@@ -1280,7 +1283,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     if (! mayHitVoxels(entryPointT, exitPointT, patternAndAddress.rg, lod))
     {
         ++skipCount;
-        return ObjectAndDistance(false, noObject, distance(origin, entryPoint), entryPoint, vec3(0.0));
+        return ObjectAndDistance(false, noObject, fastDistance(origin, entryPoint), entryPoint, vec3(0.0));
     }
 
     vec3 p = entryPoint;
@@ -1294,7 +1297,7 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
     if (cubeHasVoxel(objLoc, patternAndAddress.rg, lod))
     {
         WorldLocator obj = makeWorldLocator(cube, objLoc);
-        return ObjectAndDistance(true, obj, distance(origin, p), p, transformPoint(p, obj));
+        return ObjectAndDistance(true, obj, fastDistance(origin, p), p, transformPoint(p, obj));
     }
 
     vec3 invRayDirection = 1.0 / abs(rayDirection);
@@ -1376,14 +1379,14 @@ ObjectAndDistance raymarchVoxels(CubeLocator cube, vec3 origin, vec3 entryPoint,
         if (cubeHasVoxel(objLoc, patternAndAddress.rg, lod))
         {
             WorldLocator obj = makeWorldLocator(cube, objLoc);
-            return ObjectAndDistance(true, obj, distance(origin, p), p, transformPoint(p, obj));
+            return ObjectAndDistance(true, obj, fastDistance(origin, p), p, transformPoint(p, obj));
         }
     }
 
-    return ObjectAndDistance(false, noObject, distance(origin, p), p, vec3(0.0));
+    return ObjectAndDistance(false, noObject, fastDistance(origin, p), p, vec3(0.0));
 }
 
-ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float maxDistance)
+ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, float maxDistance)
 {
     WorldLocator noObject;
     ObjectAndDistance result;
@@ -1507,7 +1510,7 @@ ObjectAndDistance raymarchCubes(vec3 origin, vec3 rayDirection, int depth, float
 
 ObjectAndDistance raymarch(vec3 origin, vec3 rayDirection, float maxDistance)
 {
-    return raymarchCubes(origin, rayDirection, marchingDepth, maxDistance);
+    return raymarchCubes(origin, rayDirection, maxDistance);
 }
 
 vec4 skyBox(vec3 origin, vec3 rayDirection)
@@ -1515,7 +1518,7 @@ vec4 skyBox(vec3 origin, vec3 rayDirection)
     vec3 hitPoint = abs(rayDirection.y) > 0.001 ? origin + rayDirection * ((1000.0 - origin.y) / rayDirection.y)
                                                 : origin + rayDirection;
 
-    vec3 color = enableTasm && rayDirection.y > 0.0 ? processTasm(0, hitPoint.xz, hitPoint, distance(origin, hitPoint)).color
+    vec3 color = enableTasm && rayDirection.y > 0.0 ? processTasm(0, hitPoint.xz, hitPoint, fastDistance(origin, hitPoint)).color
                                                     : DISTANCE_FOG_COLOR;
 
     return vec4(color, 1.0);
@@ -1943,6 +1946,8 @@ void main()
     }
     channels.outline = freeEdge || aoEdge;
 
+    float dist = fastDistance(origin, channels.indirectP);
+
     if (tasmProgramTooLong)
     {
         fragColor = vec4(1.0, 0.0, 0.0, 1.0);
@@ -1957,7 +1962,6 @@ void main()
     }
     else if (renderChannel == DEPTH_BUFFER_CHANNEL)
     {
-        float dist = distance(origin, channels.indirectP);
         float depthLevel = min(dist, 150.0) / 150.0;
         fragColor = vec4(vec3(depthLevel), 1.0);
     }
@@ -1985,10 +1989,10 @@ void main()
                                                            : (channels.light * channels.albedo);
 
         // apply distance fog
-        float dist = min(400.0, distance(origin, channels.indirectP));
+        float clampedDist = clamp(dist, 0.0, 400.0);
         // the lower the y-coordinate, the denser the fog
         float heightDensity = max(0.0, (500.0 - abs(origin.y - channels.indirectP.y)) / 500.0);
-        float fogDensity = min(1.0, max(0.0, dist - 350.0) * 0.02 * heightDensity);
+        float fogDensity = min(1.0, max(0.0, clampedDist - 350.0) * 0.02 * heightDensity);
         composed = vec3(
             lerp(composed.r, DISTANCE_FOG_COLOR.r, fogDensity),
             lerp(composed.g, DISTANCE_FOG_COLOR.g, fogDensity),

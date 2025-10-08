@@ -1,7 +1,7 @@
 ;; Generates a sky box (or rather plane) with gradient and moving clouds.
 ;;
 
-    LD 30000         ;; maxDistance parameter
+    LD 20000         ;; maxDistance parameter
     SREG maxDistance
 
     LD 0.55          ;; threshold parameter
@@ -24,7 +24,7 @@
     DUP
     DIV2
     ENV timems
-    LD 600000000     ;; time factor
+    LD 300000000     ;; time factor
     DIV
     DUP
     ADD2

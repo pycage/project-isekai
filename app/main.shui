@@ -584,7 +584,7 @@ Document {
         origin: "top-right"
         y: theme.itemHeightMedium
         width: theme.itemWidthLarge * 3
-        height: (collapserMa.checked ? 14 : 1) * (theme.itemHeightMedium + 8)
+        height: (collapserMa.checked ? 12 : 1) * (theme.itemHeightMedium + 8)
         margins: theme.paddingLarge
         color: theme.primaryBackgroundColor.alpha(0.7)
         borderWidth: 1
@@ -727,28 +727,6 @@ Document {
 
             Label {
                 fillWidth: true
-                text: "Ray DDA Depth: " + Math.floor(marchingDepthSlider.seekValue)
-            }
-
-            Slider {
-                id: marchingDepthSlider
-
-                fillWidth: true
-                minValue: 1
-                maxValue: 128
-                stepSize: 1
-                value: 128
-            }
-        }
-
-        Box {
-            margins: 4
-            fillWidth: true
-            height: theme.itemHeightMedium
-            layout: "center-row"
-
-            Label {
-                fillWidth: true
                 text: "Iterations: " + Math.floor(tracingDepthSlider.seekValue)
             }
 
@@ -760,28 +738,6 @@ Document {
                 maxValue: 16
                 stepSize: 1
                 value: 8
-            }
-        }
-
-        Box {
-            margins: 4
-            fillWidth: true
-            height: theme.itemHeightMedium
-            layout: "center-row"
-
-            Label {
-                fillWidth: true
-                text: "Fog Density: " + Math.floor(fogDensitySlider.seekValue)
-            }
-
-            Slider {
-                id: fogDensitySlider
-
-                fillWidth: true
-                minValue: 0
-                maxValue: 256
-                stepSize: 1
-                value: 0
             }
         }
 
@@ -994,8 +950,6 @@ Document {
             canvas.setUniform("int", "enableTasm", tasmCheckBox.checked);
             canvas.setUniform("int", "enableShadows", shadingCheckBox.checked);
             canvas.setUniform("int", "enableAmbientOcclusion", ambientOcclusionCheckBox.checked);
-            //canvas.setUniform("float", "fogDensity", fogDensitySlider.seekValue / 10000.0);
-            canvas.setUniform("int", "marchingDepth", Math.floor(marchingDepthSlider.seekValue));
             canvas.setUniform("int", "tracingDepth", Math.floor(tracingDepthSlider.seekValue));
             canvas.setUniform("int", "enableOutlines", outlinesCheckBox.checked);
             canvas.setUniform("mat4", "cameraTrafo", cameraTrafo);
