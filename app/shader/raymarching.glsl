@@ -47,8 +47,9 @@ uniform sampler2D tasmData;
 struct Channels
 {
     bool final;
-    bool hit;
+    int bounces;
     float totalDistance;
+    vec3 rayDirection;
     vec3 p;
     vec3 indirectP;
     vec3 light;
@@ -127,7 +128,7 @@ const int LIGHTING_CHANNEL = 3;
 const int COLORS_CHANNEL = 4;
 const int OUTLINES_CHANNEL = 5;
 
-const vec3 DISTANCE_FOG_COLOR = vec3(0.8, 0.8, 0.8);
+const vec3 DISTANCE_FOG_COLOR = vec3(0.6, 0.5, 0.5);
 
 float[72] tasmRegisters;
 const int REG_VOID = 0;
@@ -1515,7 +1516,7 @@ vec4 skyBox(vec3 origin, vec3 rayDirection)
                                                 : origin + rayDirection;
 
     vec3 color = enableTasm && rayDirection.y > 0.0 ? processTasm(0, hitPoint.xz, hitPoint, distance(origin, hitPoint)).color
-                                                    : vec3(0.0, 0.0, 0.0);
+                                                    : DISTANCE_FOG_COLOR;
 
     return vec4(color, 1.0);
 }
@@ -1791,15 +1792,22 @@ vec3 computeLighting(vec3 origin, vec3 rayDirection, ObjectAndDistance obj, Surf
     return light;
 }
 
-Channels processChannels(vec3 origin, vec3 rayDirection, Channels channels, bool direct)
+/* Processes the channels for composing the final image. This method can be called repeatedly
+ * for deeper ray tracing and viewing depth.
+ */
+Channels processChannels(Channels channels)
 {
     if (channels.final)
     {
+        // this pixel is final and doesn't need further processing
         return channels;
     }
 
-    ObjectAndDistance objAndDistance = raymarch(origin, rayDirection, 9999.0);
-    if (direct)
+    vec3 origin = channels.indirectP;
+    vec3 incomingRayDirection = channels.rayDirection;
+
+    ObjectAndDistance objAndDistance = raymarch(origin, channels.rayDirection, 9999.0);
+    if (channels.bounces == 0)
     {
         channels.p = objAndDistance.p;
         channels.indirectP = objAndDistance.p;
@@ -1813,16 +1821,57 @@ Channels processChannels(vec3 origin, vec3 rayDirection, Channels channels, bool
     if (objAndDistance.hit)
     {
         Material material = computeMaterial(objAndDistance);
-        SurfaceNormal surfaceNormal = computeNormalVector(origin, rayDirection, objAndDistance, material.normal);
+        SurfaceNormal surfaceNormal = computeNormalVector(origin, channels.rayDirection, objAndDistance, material.normal);
         channels.surfaceNormal = surfaceNormal.bump;
         channels.roughness = material.roughness;
         channels.ior = material.ior;
-        channels.albedo = material.color;
-        channels.light = computeLighting(origin, rayDirection, objAndDistance, surfaceNormal);
-        channels.hit = true;
+        channels.albedo *= material.color;
+        //channels.light += computeLighting(origin, channels.rayDirection, objAndDistance, surfaceNormal);
 
-        if (material.roughness > 0.99 && material.ior < 0.01)
+        if (material.roughness < 1.0)
         {
+            // reflect ray
+            channels.rayDirection = reflect(channels.rayDirection, channels.surfaceNormal);
+
+            // epsilon must be small for corners, or you'll get reflected far into another block
+            channels.indirectP += channels.rayDirection * 0.01;
+
+            if (hasVoxelAt(channels.indirectP))
+            {
+                // stuck in an object, not good...
+                //debug = 2;
+                // this is a workaround suitable for water...
+                channels.indirectP -= channels.rayDirection * 0.01;
+                channels.rayDirection.y *= -1.0;
+                channels.indirectP += channels.rayDirection * 0.01;
+            }
+
+            float fresnel = pow(clamp(1.0 - dot(channels.surfaceNormal, channels.rayDirection * -1.0), 0.5, 1.0), 1.0);
+            channels.light += (1.0 - material.roughness) * computeLighting(origin, incomingRayDirection, objAndDistance, surfaceNormal) * fresnel;
+
+            ++channels.bounces;
+        }
+        else if (material.ior > 0.0)
+        {
+            vec3 refractedRay = refr(channels.rayDirection, channels.surfaceNormal, channels.ior);
+            if (length(refractedRay) < 0.0001)
+            {
+                // total internal reflection
+                channels.rayDirection = normalize(reflect(channels.rayDirection, channels.surfaceNormal));
+            }
+            else
+            {
+                //insideObject = ! insideObject;
+                channels.rayDirection = normalize(refractedRay);
+            }
+            channels.indirectP += channels.rayDirection * 0.01;
+            channels.light += computeLighting(origin, incomingRayDirection, objAndDistance, surfaceNormal);
+
+            ++channels.bounces;
+        }
+        else
+        {
+            channels.light += computeLighting(origin, incomingRayDirection, objAndDistance, surfaceNormal);
             channels.final = true;
         }
     }
@@ -1870,64 +1919,27 @@ void main()
     Channels channels;
     vec3 currentOrigin = origin;
 
-    channels.albedo = skyBox(currentOrigin, rayDirection).rgb;
-    channels.light = getLightColor(0);
+    channels.indirectP = origin;
+    channels.rayDirection = rayDirection;
+    channels.albedo = vec3(1.0);
+    channels.light = vec3(0.0);
 
-    bool direct = true;
     for (int i = 0; i < 16; ++i)
     {
-        if (i >= tracingDepth || channels.final)
+        if (channels.final)
         {
             break;
         }
-
-        channels = processChannels(currentOrigin, rayDirection, channels, direct);
-
-        if (! channels.hit)
+        else if (i >= tracingDepth)
         {
-            currentOrigin = channels.indirectP;
-        }
-        else if (channels.roughness < 1.0)
-        {
-            direct = false;
-            rayDirection = reflect(rayDirection, channels.surfaceNormal);
+            // hit the sky
+            channels.albedo *= skyBox(channels.indirectP, channels.rayDirection).rgb;
+            channels.light += getLightColor(0);
 
-            // epsilon must be small for corners, or you'll get reflected far into another block
-            currentOrigin = channels.indirectP + rayDirection * 0.01;
-            channels.hit = false;
-
-            if (hasVoxelAt(currentOrigin))
-            {
-                // stuck in an object, not good...
-                //debug = 2;
-                // this is a workaround suitable for water...
-                rayDirection.y *= -1.0;
-                currentOrigin = channels.indirectP + rayDirection * 0.01;
-            }
-
-            float fresnel = pow(clamp(1.0 - dot(channels.surfaceNormal, rayDirection * -1.0), 0.5, 1.0), 1.0);
-            channels.albedo = skyBox(currentOrigin, rayDirection).rgb;
-            channels.light = getLightColor(0) * fresnel * (1.0 - channels.roughness);
-        }
-        else if (channels.ior > 0.1)
-        {
-            vec3 refractedRay = refr(rayDirection, channels.surfaceNormal, channels.ior);
-            if (length(refractedRay) < 0.0001)
-            {
-                // total internal reflection
-                rayDirection = normalize(reflect(rayDirection, channels.surfaceNormal));
-            }
-            else
-            {
-                //insideObject = ! insideObject;
-                rayDirection = normalize(refractedRay);
-            }
-            currentOrigin = channels.indirectP + rayDirection * 0.01;
-        }
-        else
-        {
             break;
         }
+
+        channels = processChannels(channels);
     }
     channels.outline = freeEdge || aoEdge;
 
@@ -1973,10 +1985,10 @@ void main()
                                                            : (channels.light * channels.albedo);
 
         // apply distance fog
-        float dist = distance(origin, channels.indirectP);
+        float dist = min(400.0, distance(origin, channels.indirectP));
         // the lower the y-coordinate, the denser the fog
-        float heightDensity = max(0.0, (600.0 - channels.indirectP.y) / 300.0);
-        float fogDensity = min(1.0, max(0.0, dist - 300.0) * 0.03 * heightDensity);
+        float heightDensity = max(0.0, (500.0 - abs(origin.y - channels.indirectP.y)) / 500.0);
+        float fogDensity = min(1.0, max(0.0, dist - 350.0) * 0.02 * heightDensity);
         composed = vec3(
             lerp(composed.r, DISTANCE_FOG_COLOR.r, fogDensity),
             lerp(composed.g, DISTANCE_FOG_COLOR.g, fogDensity),
